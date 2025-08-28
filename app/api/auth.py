@@ -35,19 +35,16 @@ async def callback(code: str = Query(...), state: str = Query(None)):
         token_info = spotify_service.get_access_token(code)
         
         if not token_info:
-            raise HTTPException(status_code=400, detail="Failed to get access token")
+            # Redirect to frontend with error
+            return RedirectResponse(url="http://localhost:5173/?error=auth_failed")
         
-        # In a real app, you'd store this token securely (database, session, etc.)
-        # For now, we'll return it to the client
-        return {
-            "access_token": token_info['access_token'],
-            "refresh_token": token_info['refresh_token'],
-            "expires_in": token_info['expires_in'],
-            "message": "Authentication successful!"
-        }
+        # Redirect to frontend with success and access token
+        access_token = token_info['access_token']
+        return RedirectResponse(url=f"http://localhost:5173/?success=true&access_token={access_token}")
     
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Callback error: {str(e)}")
+        # Redirect to frontend with error
+        return RedirectResponse(url=f"http://localhost:5173/?error=auth_failed")
 
 @router.post("/validate-token")
 async def validate_token(token_data: Dict[str, str]):
