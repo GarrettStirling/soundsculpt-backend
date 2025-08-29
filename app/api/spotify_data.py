@@ -50,7 +50,6 @@ async def get_top_tracks_simple(
                 "artist": ", ".join([artist['name'] for artist in track['artists']]),
                 "album": track['album']['name'],
                 "popularity": track['popularity'],
-                "preview_url": track['preview_url'],
                 "external_url": track['external_urls']['spotify'],
                 "duration_ms": track['duration_ms']
             })
@@ -120,7 +119,6 @@ async def get_top_tracks(
                 "album": track['album']['name'],
                 "popularity": track['popularity'],
                 "duration_ms": track['duration_ms'],
-                "preview_url": track['preview_url'],
                 "external_urls": track['external_urls'],
                 "images": track['album']['images']
             })
@@ -199,7 +197,6 @@ async def get_recently_played(
                 "album": track['album']['name'],
                 "played_at": item['played_at'],
                 "duration_ms": track['duration_ms'],
-                "preview_url": track['preview_url'],
                 "external_urls": track['external_urls'],
                 "images": track['album']['images']
             })

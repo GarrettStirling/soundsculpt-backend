@@ -117,7 +117,11 @@ async def get_ml_recommendations(
 @router.get("/search-based-discovery")
 async def get_search_based_recommendations(
     token: str = Query(..., description="Spotify access token"),
-    n_recommendations: int = Query(30, ge=1, le=50, description="Number of songs to recommend")
+    n_recommendations: int = Query(30, ge=1, le=50, description="Number of songs to recommend"),
+    energy: Optional[int] = Query(None, ge=0, le=100, description="Energy preference (0=chill, 100=energetic)"),
+    instrumentalness: Optional[int] = Query(None, ge=0, le=100, description="Instrumentalness preference (0=vocal, 100=instrumental)"),
+    generation_seed: int = Query(0, ge=0, description="Generation seed for variation (0=first generation, 1+=subsequent)"),
+    exclude_track_ids: Optional[str] = Query(None, description="Comma-separated list of track IDs to exclude from recommendations")
 ):
     """
     Get music discovery recommendations focused on new artists and underground tracks
@@ -127,8 +131,26 @@ async def get_search_based_recommendations(
         print(f"Token provided: {'Yes' if token else 'No'}")
         print(f"Token length: {len(token) if token else 0}")
         print(f"Token starts with: {token[:10] if token else 'None'}...")
+        print(f"Generation seed: {generation_seed}")
+        
+        # Parse excluded track IDs
+        excluded_ids = set()
+        if exclude_track_ids:
+            excluded_ids = set(exclude_track_ids.split(','))
+            print(f"Excluding {len(excluded_ids)} previously shown tracks")
+        
+        # Build user preferences if provided
+        user_preferences = {}
+        if energy is not None:
+            user_preferences['energy'] = energy
+        if instrumentalness is not None:
+            user_preferences['instrumentalness'] = instrumentalness
+        
+        if user_preferences:
+            print(f"User preferences: {user_preferences}")
+        
         recommender_type = 'Discovery' if RECOMMENDATION_MODE == 'discovery' else 'Advanced'
-        print(f"Requesting {n_recommendations} {recommender_type} recommendations")
+        print(f"Requesting {n_recommendations} {recommender_type} recommendations (gen #{generation_seed + 1})")
 
         if not token or len(token) < 10:
             raise HTTPException(status_code=400, detail="Invalid or missing access token")
@@ -137,12 +159,18 @@ async def get_search_based_recommendations(
         if RECOMMENDATION_MODE == 'discovery':
             result = discovery_recommendation_service.get_recommendations(
                 access_token=token,
-                n_recommendations=n_recommendations
+                n_recommendations=n_recommendations,
+                user_preferences=user_preferences if user_preferences else None,
+                generation_seed=generation_seed,
+                excluded_track_ids=excluded_ids
             )
         else:
             result = advanced_recommendation_service.get_recommendations(
                 access_token=token,
-                n_recommendations=n_recommendations
+                n_recommendations=n_recommendations,
+                user_preferences=user_preferences if user_preferences else None,
+                generation_seed=generation_seed,
+                excluded_track_ids=excluded_ids
             )
 
         if "error" in result:
