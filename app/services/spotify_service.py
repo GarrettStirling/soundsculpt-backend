@@ -15,8 +15,11 @@ class SpotifyService:
 
         print("SpotifyService initialized with client ID:", self.client_id)
 
-        # Define the scope of permissions we need
-        self.scope = "user-read-recently-played user-library-read playlist-read-private user-top-read playlist-read-collaborative user-read-playback-state user-read-currently-playing"
+        # Define the scope of permissions we need (expanded for recommendations)
+        self.scope = (
+            "user-read-recently-played user-library-read playlist-read-private "
+            "user-top-read playlist-read-collaborative user-read-email"
+        )
         
         # Initialize Spotify OAuth
         self.sp_oauth = SpotifyOAuth(

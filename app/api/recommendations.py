@@ -1,15 +1,84 @@
 """
-Recommendation API endpoints - Clean version
+Recommendation API endpoints - Advanced and Discovery recommendations
 """
 
 from fastapi import APIRouter, HTTPException, Query, Body
-from app.services.simple_recommendation_service import SimpleRecommendationService
+import os
+from app.services.advanced_recommendation_service import AdvancedRecommendationService
+from app.services.discovery_recommendation_service import DiscoveryRecommendationService
 from typing import List, Optional, Dict
 
-router = APIRouter(prefix="/recommendations", tags=["AI Recommendations"])
+router = APIRouter(prefix="/recommendations", tags=["Music Recommendations"])
 
-# Initialize recommendation service
-simple_recommendation_service = SimpleRecommendationService()
+
+# Toggle between advanced and discovery recommendations
+RECOMMENDATION_MODE = os.getenv('RECOMMENDATION_MODE', 'discovery')
+advanced_recommendation_service = AdvancedRecommendationService()
+discovery_recommendation_service = DiscoveryRecommendationService()
+
+@router.get("/test-token")
+async def test_token(token: str = Query(..., description="Spotify access token")):
+    """Test if a Spotify access token is valid"""
+    try:
+        from app.services.spotify_service import SpotifyService
+        spotify_service = SpotifyService()
+        sp = spotify_service.create_spotify_client(token)
+        user_info = sp.me()
+        return {
+            "valid": True,
+            "user": user_info.get('display_name', 'Unknown'),
+            "user_id": user_info.get('id', 'Unknown')
+        }
+    except Exception as e:
+        return {
+            "valid": False,
+            "error": str(e)
+        }
+
+@router.get("/collection-size")
+async def get_collection_size(token: str = Query(..., description="Spotify access token")):
+    """Get user's collection size for optimization warnings"""
+    try:
+        from app.services.spotify_service import SpotifyService
+        spotify_service = SpotifyService()
+        sp = spotify_service.create_spotify_client(token)
+        
+        # Quick scan to get collection size
+        saved_tracks = sp.current_user_saved_tracks(limit=1)
+        total_saved = saved_tracks.get('total', 0)
+        
+        playlists = sp.current_user_playlists(limit=1)
+        total_playlists = playlists.get('total', 0)
+        
+        # Determine collection category
+        if total_saved > 5000:
+            category = "power_user"
+            estimated_time = "15-25 seconds"
+            warning = f"Large collection detected ({total_saved:,} songs)! This may take {estimated_time}."
+        elif total_saved > 2000:
+            category = "heavy_user" 
+            estimated_time = "8-15 seconds"
+            warning = f"Medium collection size ({total_saved:,} songs). Estimated time: {estimated_time}."
+        else:
+            category = "standard_user"
+            estimated_time = "3-8 seconds"
+            warning = None
+        
+        return {
+            "total_saved_tracks": total_saved,
+            "total_playlists": total_playlists,
+            "category": category,
+            "estimated_time": estimated_time,
+            "warning": warning,
+            "optimization_note": "We'll use smart sampling for faster processing" if total_saved > 3000 else None
+        }
+    except Exception as e:
+        return {
+            "error": str(e),
+            "total_saved_tracks": 0,
+            "category": "unknown"
+        }
+
 
 @router.post("/ml-recommendations")
 async def get_ml_recommendations(
@@ -21,25 +90,72 @@ async def get_ml_recommendations(
     Get personalized AI recommendations using user's listening history and preferences
     """
     try:
-        print(f"=== AI RECOMMENDATIONS ENDPOINT ===")
+        print(f"=== ML RECOMMENDATIONS ENDPOINT ===")
         print(f"User controls: {user_controls}")
-        
-        # Use the simple recommendation service with deduplication
-        result = simple_recommendation_service.get_simple_recommendations(
-            access_token=token,
-            n_recommendations=n_recommendations
-        )
-        
+        recommender_type = 'Discovery' if RECOMMENDATION_MODE == 'discovery' else 'Advanced'
+        print(f"Requesting {n_recommendations} {recommender_type} recommendations")
+        if RECOMMENDATION_MODE == 'discovery':
+            result = discovery_recommendation_service.get_recommendations(
+                access_token=token,
+                n_recommendations=n_recommendations
+            )
+        else:
+            result = advanced_recommendation_service.get_recommendations(
+                access_token=token,
+                n_recommendations=n_recommendations
+            )
         if "error" in result:
             raise HTTPException(status_code=400, detail=result["error"])
-        
-        # Add user controls info to response
         result["user_controls"] = user_controls
-        
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"AI recommendations error: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@router.get("/search-based-discovery")
+async def get_search_based_recommendations(
+    token: str = Query(..., description="Spotify access token"),
+    n_recommendations: int = Query(30, ge=1, le=50, description="Number of songs to recommend")
+):
+    """
+    Get music discovery recommendations focused on new artists and underground tracks
+    """
+    try:
+        print(f"=== MUSIC DISCOVERY ENDPOINT ===")
+        print(f"Token provided: {'Yes' if token else 'No'}")
+        print(f"Token length: {len(token) if token else 0}")
+        print(f"Token starts with: {token[:10] if token else 'None'}...")
+        recommender_type = 'Discovery' if RECOMMENDATION_MODE == 'discovery' else 'Advanced'
+        print(f"Requesting {n_recommendations} {recommender_type} recommendations")
+
+        if not token or len(token) < 10:
+            raise HTTPException(status_code=400, detail="Invalid or missing access token")
+
+        # Use the selected recommendation service
+        if RECOMMENDATION_MODE == 'discovery':
+            result = discovery_recommendation_service.get_recommendations(
+                access_token=token,
+                n_recommendations=n_recommendations
+            )
+        else:
+            result = advanced_recommendation_service.get_recommendations(
+                access_token=token,
+                n_recommendations=n_recommendations
+            )
+
+        if "error" in result:
+            print(f"Error from recommendation service: {result['error']}")
+            raise HTTPException(status_code=400, detail=result["error"])
+
+        print(f"Successfully generated {len(result.get('recommendations', []))} {recommender_type} recommendations")
         return result
         
     except HTTPException:
         raise
     except Exception as e:
-        print(f"AI recommendations error: {e}")
+        print(f"Music discovery error: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
