@@ -9,12 +9,13 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 # Initialize Spotify service
 spotify_service = SpotifyService()
 
+
 @router.get("/login")
 async def login():
-    """Initiate Spotify OAuth login"""
+    """Initiate Spotify OAuth login and redirect to Spotify"""
     try:
         auth_url = spotify_service.get_auth_url()
-        return {"auth_url": auth_url}
+        return RedirectResponse(url=auth_url)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Authentication error: {str(e)}")
 

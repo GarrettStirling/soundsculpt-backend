@@ -1,10 +1,11 @@
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from app.api import auth, spotify_data, recommendations
 from app.services.spotify_service import SpotifyService
 import os
 import sys
+import time
 # Ensure the app directory is in the Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -31,6 +32,16 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(spotify_data.router)
 app.include_router(recommendations.router)
+
+# Add request logging middleware
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start_time = time.time()
+    print(f"🌐 REQUEST: {request.method} {request.url}")
+    response = await call_next(request)
+    process_time = time.time() - start_time
+    print(f"🌐 RESPONSE: {response.status_code} ({process_time:.2f}s)")
+    return response
 
 @app.get("/")
 async def root():

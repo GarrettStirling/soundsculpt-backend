@@ -1,5 +1,5 @@
 import spotipy
-from spotipy.oauth2 import SpotifyOAuth
+from spotipy.oauth2 import SpotifyOAuth, SpotifyClientCredentials
 import os
 from typing import List, Dict, Optional
 import pandas as pd
@@ -42,6 +42,14 @@ class SpotifyService:
     def create_spotify_client(self, access_token: str) -> spotipy.Spotify:
         """Create authenticated Spotify client"""
         return spotipy.Spotify(auth=access_token)
+    
+    def create_client_credentials_client(self) -> spotipy.Spotify:
+        """Create Spotify client using Client Credentials flow (no user auth needed)"""
+        client_credentials_manager = SpotifyClientCredentials(
+            client_id=self.client_id,
+            client_secret=self.client_secret
+        )
+        return spotipy.Spotify(client_credentials_manager=client_credentials_manager)
     
     def get_user_profile(self, sp: spotipy.Spotify) -> Dict:
         """Get user's basic profile information"""
