@@ -1,12 +1,14 @@
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, HTTPException, Header, Query
 from app.services.spotify_service import SpotifyService
+from app.services.deezer_service import DeezerService
 from typing import Optional, Dict, List
 import spotipy
 
 router = APIRouter(prefix="/spotify", tags=["Spotify Data"])
 
-# Initialize Spotify service
+# Initialize services
 spotify_service = SpotifyService()
+deezer_service = DeezerService()
 
 @router.get("/test-token")
 async def test_token(token: str):
@@ -244,3 +246,69 @@ async def get_user_playlists(
     
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error fetching playlists: {str(e)}")
+
+@router.get("/deezer-preview")
+async def get_deezer_preview(
+    track_name: str = Query(..., description="Track name"),
+    artist_name: str = Query(..., description="Artist name")
+):
+    """
+    Get Deezer preview URL for a track
+    """
+    try:
+        print(f"🎵 Searching Deezer for: '{track_name}' by '{artist_name}'")
+        
+        # Search for the track on Deezer
+        deezer_result = deezer_service.search_track(track_name, artist_name)
+        
+        if deezer_result:
+            print(f"✅ Found Deezer preview: {deezer_result['preview_url']}")
+            return {
+                "found": True,
+                "preview_url": deezer_result['preview_url'],
+                "deezer_id": deezer_result['deezer_id'],
+                "title": deezer_result['title'],
+                "artist": deezer_result['artist'],
+                "duration": deezer_result['duration']
+            }
+        else:
+            print(f"❌ No Deezer preview found for: '{track_name}' by '{artist_name}'")
+            return {
+                "found": False,
+                "error": "No preview available on Deezer"
+            }
+            
+    except Exception as e:
+        print(f"Error getting Deezer preview: {e}")
+        return {
+            "found": False,
+            "error": str(e)
+        }
+
+@router.get("/test-deezer-connection")
+async def test_deezer_connection():
+    """
+    Test Deezer API connection with a known track
+    """
+    try:
+        # Test with a well-known track
+        test_result = deezer_service.search_track("Come A Little Closer", "Cage The Elephant")
+        
+        if test_result:
+            return {
+                "status": "success",
+                "message": "Deezer API connection working",
+                "test_track": test_result
+            }
+        else:
+            return {
+                "status": "no_preview",
+                "message": "Deezer API connected but no preview found for test track"
+            }
+            
+    except Exception as e:
+        return {
+            "status": "error", 
+            "message": f"Deezer API connection failed: {str(e)}",
+            "note": "Make sure RAPIDAPI_KEY is set in .env file"
+        }

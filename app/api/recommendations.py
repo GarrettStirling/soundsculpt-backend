@@ -3,7 +3,11 @@ Recommendation API endpoints - Advanced and Discovery recommendations
 """
 
 from fastapi import APIRouter, HTTPException, Query, Body
+from fastapi.responses import StreamingResponse
 import os
+import json
+import asyncio
+import time
 from app.services.advanced_recommendation_service import AdvancedRecommendationService
 from app.services.discovery_recommendation_service import DiscoveryRecommendationService
 from typing import List, Optional, Dict

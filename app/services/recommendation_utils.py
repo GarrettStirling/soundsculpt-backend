@@ -7,6 +7,7 @@ import spotipy
 from typing import List, Dict, Optional, Set
 import time
 import random
+from .deezer_service import DeezerService
 
 
 class RecommendationUtils:
@@ -32,6 +33,8 @@ class RecommendationUtils:
             top_artists = sp.current_user_top_artists(limit=50, time_range='medium_term')
             patterns['favorite_artists'] = [artist['name'] for artist in top_artists['items']]
             
+            print(f"  📊 Analyzing genre patterns from {len(top_artists['items'])} top artists...")
+            
             # Extract genres from artists
             genre_count = {}
             for artist in top_artists['items']:
@@ -40,6 +43,8 @@ class RecommendationUtils:
             
             # Sort genres by frequency
             patterns['top_genres'] = [genre for genre, count in sorted(genre_count.items(), key=lambda x: x[1], reverse=True)]
+            
+            print(f"  🎯 Identified {len(patterns['top_genres'])} unique genres in your taste profile")
             
             # Calculate diversity score
             total_genres = len(genre_count)
@@ -114,6 +119,36 @@ class RecommendationUtils:
             print(f"    ⚠️ Error getting saved tracks: {e}")
         
         return user_tracks
+    
+    @staticmethod
+    def is_suspicious_track_name(name: str, context: str = "") -> bool:
+        """
+        More intelligent filtering - only filter obvious genre names or empty titles
+        """
+        if not name or len(name) < 2:
+            return True
+        
+        name_lower = name.lower().strip()
+        
+        # Only filter very obvious genre names that are short and exact matches
+        exact_genre_names = {
+            'indie', 'rock', 'pop', 'jazz', 'blues', 'folk', 'country', 
+            'metal', 'punk', 'rap', 'soul', 'funk', 'disco'
+        }
+        
+        # Filter if it's exactly a genre name AND very short (likely not a real song)
+        if name_lower in exact_genre_names and len(name) <= 6:
+            return True
+        
+        # Filter obvious non-song patterns
+        if name_lower in ['various artists', 'unknown', 'untitled', '', 'track']:
+            return True
+            
+        # If it exactly matches the search context (genre), it's suspicious
+        if context and name_lower == context.lower():
+            return True
+            
+        return False
     
     @staticmethod
     def get_user_tracks_simple(sp: spotipy.Spotify, max_tracks: int = 2000) -> tuple[Set[str], Dict[str, int]]:
@@ -317,6 +352,7 @@ class RecommendationUtils:
         No hardcoded search terms - generates queries from user's actual listening patterns
         """
         print(f"  🔍 Data-driven discovery for {n_recommendations} tracks...")
+        print(f"  📋 Building search strategy from your music profile...")
         
         recommendations = []
         seen_ids = set(user_tracks)
@@ -329,6 +365,8 @@ class RecommendationUtils:
         exploration_mode = user_patterns.get('exploration_mode', 'mixed')
         
         print(f"    🎯 Exploration mode: {exploration_mode}")
+        print(f"    🎨 Primary genres: {', '.join(top_genres[:5]) if top_genres else 'Discovering...'}")
+        print(f"    🎤 Favorite artists: {len(favorite_artists)} analyzed")
         
         # Calculate discovery preference - affects popularity filtering only
         discovery_focus = 50  # Default: balanced
@@ -360,7 +398,7 @@ class RecommendationUtils:
             
         for genre in top_genres[:genre_limit]:
             try:
-                print(f"    Searching genre: {genre}")
+                print(f"    🎵 Exploring '{genre}' music...")
                 
                 # Simple, clean genre searches - adapt queries based on exploration mode
                 search_queries = [
@@ -405,6 +443,21 @@ class RecommendationUtils:
                             # Apply popularity filtering based on discovery preference
                             track_popularity = track.get('popularity', 0)
                             if track_popularity <= popularity_threshold:
+                                # Validate track data quality
+                                track_name = track.get('name', '').strip()
+                                
+                                # Use smarter filtering
+                                if RecommendationUtils.is_suspicious_track_name(track_name, genre):
+                                    print(f"      Skipped suspicious track name: '{track_name}' for genre '{genre}'")
+                                    continue
+                                
+                                # Filter out tracks shorter than 1 minute
+                                if not RecommendationUtils.is_valid_duration(track):
+                                    duration_ms = track.get('duration_ms', 0)
+                                    duration_sec = duration_ms / 1000 if duration_ms else 0
+                                    print(f"      Skipped short track: '{track['name']}' ({duration_sec:.0f}s)")
+                                    continue
+                                
                                 # Debug logging to check track data
                                 print(f"      DEBUG - Track name: '{track['name']}', Genre context: '{genre}'")
                                 
@@ -477,6 +530,21 @@ class RecommendationUtils:
                                 artist_popularity_threshold = popularity_threshold + 10
                                 
                                 if track_popularity <= artist_popularity_threshold:
+                                    # Validate track data quality for artist searches too
+                                    track_name = track.get('name', '').strip()
+                                    
+                                    # Use smarter filtering
+                                    if RecommendationUtils.is_suspicious_track_name(track_name, artist_name):
+                                        print(f"      Skipped suspicious track name: '{track_name}' for artist '{artist_name}'")
+                                        continue
+                                    
+                                    # Filter out tracks shorter than 1 minute
+                                    if not RecommendationUtils.is_valid_duration(track):
+                                        duration_ms = track.get('duration_ms', 0)
+                                        duration_sec = duration_ms / 1000 if duration_ms else 0
+                                        print(f"      Skipped short track: '{track['name']}' ({duration_sec:.0f}s)")
+                                        continue
+                                    
                                     recommendations.append(RecommendationUtils.format_track_recommendation(
                                         track, f'similar_to_{artist_name.replace(" ", "_")}'
                                     ))
@@ -510,6 +578,35 @@ class RecommendationUtils:
         return base_threshold
 
     @staticmethod
+    def is_valid_duration(track: Dict, min_duration_ms: int = 60000, check_deezer: bool = False) -> bool:
+        """
+        Check if a track meets minimum duration requirements (default: 1 minute)
+        Uses Spotify's duration_ms if available, can fall back to Deezer API if check_deezer=True
+        """
+        duration_ms = track.get('duration_ms')
+        if duration_ms is not None:
+            return duration_ms >= min_duration_ms
+        
+        # If Spotify doesn't have duration and check_deezer is enabled, try Deezer
+        if check_deezer:
+            try:
+                deezer_service = DeezerService()
+                track_name = track.get('name', '')
+                artist_name = track['artists'][0]['name'] if track.get('artists') else ''
+                
+                if track_name and artist_name:
+                    deezer_track = deezer_service.search_track(track_name, artist_name)
+                    if deezer_track and deezer_track.get('duration'):
+                        # Deezer duration is in seconds, convert to milliseconds
+                        deezer_duration_ms = deezer_track['duration'] * 1000
+                        return deezer_duration_ms >= min_duration_ms
+            except Exception as e:
+                print(f"      Error checking Deezer duration for {track.get('name', 'Unknown')}: {e}")
+        
+        # If no duration data available, return True to avoid filtering tracks without duration data
+        return True
+    
+    @staticmethod
     def format_track_recommendation(track: Dict, discovery_method: str) -> Dict:
         """Standard format for track recommendations across services"""
         return {
@@ -520,5 +617,6 @@ class RecommendationUtils:
             'album_cover': track['album']['images'][0]['url'] if track['album']['images'] else None,
             'external_url': track['external_urls']['spotify'],
             'popularity': track.get('popularity', 0),
+            'duration_ms': track.get('duration_ms'),
             'discovery_method': discovery_method
         }
