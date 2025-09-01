@@ -369,13 +369,13 @@ class RecommendationUtils:
         print(f"    🎤 Favorite artists: {len(favorite_artists)} analyzed")
         
         # Calculate discovery preference - affects popularity filtering only
-        discovery_focus = 50  # Default: balanced
+        popularity_focus = 50  # Default: balanced
         if user_preferences:
-            discovery_focus = user_preferences.get('energy', 50)  # Using energy as discovery focus
+            popularity_focus = user_preferences.get('popularity', 50)  # Using popularity as discovery focus
         
         # Dynamic popularity threshold based on discovery focus AND exploration mode
         # Lower values = more underground/niche, Higher values = more mainstream
-        base_threshold = 30 + (discovery_focus * 0.6)  # Range: 30-90
+        base_threshold = 30 + (popularity_focus * 0.6)  # Range: 30-90
         
         # Modify threshold based on exploration mode
         if exploration_mode == 'popularity_niche':
@@ -385,7 +385,7 @@ class RecommendationUtils:
         else:
             popularity_threshold = base_threshold
         
-        print(f"    Discovery focus: {discovery_focus} (popularity threshold: {popularity_threshold:.0f})")
+        print(f"    Popularity focus: {popularity_focus} (popularity threshold: {popularity_threshold:.0f})")
         
         # Strategy 1: Pure genre search - adapt based on exploration mode
         genre_limit = 6  # Default
@@ -566,16 +566,6 @@ class RecommendationUtils:
         
         print(f"  ✅ Generated {len(recommendations)} recommendations using pure data-driven search")
         return recommendations
-
-    @staticmethod
-    def calculate_popularity_threshold(user_preferences: Optional[Dict], base_threshold: int = 75) -> int:
-        """Calculate popularity threshold based on user preferences"""
-        if user_preferences:
-            energy = user_preferences.get('energy', 50)
-            # Lower energy = prefer less popular (more niche) tracks
-            # Higher energy = allow more popular (mainstream) tracks
-            return int(base_threshold - 15 + (energy * 0.2))  # Range: 60-90
-        return base_threshold
 
     @staticmethod
     def is_valid_duration(track: Dict, min_duration_ms: int = 60000, check_deezer: bool = False) -> bool:

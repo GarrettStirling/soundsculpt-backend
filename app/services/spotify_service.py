@@ -15,10 +15,11 @@ class SpotifyService:
 
         print("SpotifyService initialized with client ID:", self.client_id)
 
-        # Define the scope of permissions we need (expanded for recommendations)
+        # Define the scope of permissions we need (expanded for recommendations and playlists)
         self.scope = (
             "user-read-recently-played user-library-read playlist-read-private "
-            "user-top-read playlist-read-collaborative user-read-email"
+            "user-top-read playlist-read-collaborative user-read-email "
+            "playlist-modify-public playlist-modify-private"
         )
         
         # Initialize Spotify OAuth
@@ -137,3 +138,53 @@ class SpotifyService:
         except Exception as e:
             print(f"Error searching tracks: {e}")
             return []
+    
+    def create_playlist(self, sp: spotipy.Spotify, name: str, description: str = "", public: bool = False) -> Optional[Dict]:
+        """Create a new playlist for the user"""
+        try:
+            user_id = sp.current_user()['id']
+            playlist = sp.user_playlist_create(
+                user=user_id,
+                name=name,
+                public=public,
+                description=description
+            )
+            return playlist
+        except Exception as e:
+            print(f"Error creating playlist: {e}")
+            return None
+    
+    def add_tracks_to_playlist(self, sp: spotipy.Spotify, playlist_id: str, track_ids: List[str]) -> bool:
+        """Add tracks to an existing playlist"""
+        try:
+            # Spotify API allows max 100 tracks per request
+            for i in range(0, len(track_ids), 100):
+                batch = track_ids[i:i+100]
+                track_uris = [f"spotify:track:{track_id}" for track_id in batch]
+                sp.playlist_add_items(playlist_id, track_uris)
+            return True
+        except Exception as e:
+            print(f"Error adding tracks to playlist: {e}")
+            return False
+    
+    def create_playlist_from_recommendations(self, sp: spotipy.Spotify, recommendations: List[Dict], playlist_name: str, description: str = "") -> Optional[Dict]:
+        """Create a playlist and add recommended tracks to it"""
+        try:
+            # Create the playlist
+            playlist = self.create_playlist(sp, playlist_name, description, public=False)
+            if not playlist:
+                return None
+            
+            # Extract track IDs from recommendations
+            track_ids = [track['id'] for track in recommendations if track.get('id')]
+            
+            # Add tracks to the playlist
+            if track_ids:
+                success = self.add_tracks_to_playlist(sp, playlist['id'], track_ids)
+                if success:
+                    return playlist
+            
+            return None
+        except Exception as e:
+            print(f"Error creating playlist from recommendations: {e}")
+            return None

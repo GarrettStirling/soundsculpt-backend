@@ -1,5 +1,5 @@
 """
-Recommendation API endpoints - Advanced and Discovery recommendations
+Recommendation API endpoints - Discovery recommendations
 """
 
 from fastapi import APIRouter, HTTPException, Query, Body
@@ -8,17 +8,31 @@ import os
 import json
 import asyncio
 import time
-from app.services.advanced_recommendation_service import AdvancedRecommendationService
 from app.services.discovery_recommendation_service import DiscoveryRecommendationService
+from app.services.spotify_service import SpotifyService
 from typing import List, Optional, Dict
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/recommendations", tags=["Music Recommendations"])
 
+# Pydantic models for request/response
+class PlaylistCreationRequest(BaseModel):
+    name: str
+    description: Optional[str] = ""
+    public: Optional[bool] = False
+    track_ids: List[str]
 
-# Toggle between advanced and discovery recommendations
-RECOMMENDATION_MODE = os.getenv('RECOMMENDATION_MODE', 'discovery')
-advanced_recommendation_service = AdvancedRecommendationService()
+class PlaylistCreationResponse(BaseModel):
+    success: bool
+    playlist_id: Optional[str] = None
+    playlist_url: Optional[str] = None
+    message: str
+    tracks_added: Optional[int] = None
+
+
+# Initialize services
 discovery_recommendation_service = DiscoveryRecommendationService()
+spotify_service = SpotifyService()
 
 @router.get("/test-token")
 async def test_token(token: str = Query(..., description="Spotify access token")):
@@ -122,8 +136,8 @@ async def get_ml_recommendations(
 async def get_search_based_recommendations(
     token: str = Query(..., description="Spotify access token"),
     n_recommendations: int = Query(30, ge=1, le=50, description="Number of songs to recommend"),
-    energy: Optional[int] = Query(None, ge=0, le=100, description="Energy preference (0=chill, 100=energetic)"),
-    instrumentalness: Optional[int] = Query(None, ge=0, le=100, description="Instrumentalness preference (0=vocal, 100=instrumental)"),
+    popularity: Optional[int] = Query(None, ge=0, le=100, description="Popularity preference (0=niche, 100=mainstream)"),
+    analysis_track_count: int = Query(1000, ge=50, le=5000, description="Number of recent tracks to analyze"),
     generation_seed: int = Query(0, ge=0, description="Generation seed for variation (0=first generation, 1+=subsequent)"),
     exclude_track_ids: Optional[str] = Query(None, description="Comma-separated list of track IDs to exclude from recommendations")
 ):
@@ -145,49 +159,114 @@ async def get_search_based_recommendations(
         
         # Build user preferences if provided
         user_preferences = {}
-        if energy is not None:
-            user_preferences['energy'] = energy
-        if instrumentalness is not None:
-            user_preferences['instrumentalness'] = instrumentalness
+        if popularity is not None:
+            user_preferences['popularity'] = popularity
         
         if user_preferences:
             print(f"User preferences: {user_preferences}")
         
-        recommender_type = 'Discovery' if RECOMMENDATION_MODE == 'discovery' else 'Advanced'
-        print(f"Requesting {n_recommendations} {recommender_type} recommendations (gen #{generation_seed + 1})")
+        print(f"Requesting {n_recommendations} recommendations (gen #{generation_seed + 1})")
 
         if not token or len(token) < 10:
             raise HTTPException(status_code=400, detail="Invalid or missing access token")
 
-        # Use the selected recommendation service
-        if RECOMMENDATION_MODE == 'discovery':
-            result = discovery_recommendation_service.get_recommendations(
-                access_token=token,
-                n_recommendations=n_recommendations,
-                user_preferences=user_preferences if user_preferences else None,
-                generation_seed=generation_seed,
-                excluded_track_ids=excluded_ids
-            )
-        else:
-            result = advanced_recommendation_service.get_recommendations(
-                access_token=token,
-                n_recommendations=n_recommendations,
-                user_preferences=user_preferences if user_preferences else None,
-                generation_seed=generation_seed,
-                excluded_track_ids=excluded_ids
-            )
+        # Use the discovery recommendation service
+        result = discovery_recommendation_service.get_recommendations(
+            access_token=token,
+            n_recommendations=n_recommendations,
+            user_preferences=user_preferences if user_preferences else None,
+            generation_seed=generation_seed,
+            excluded_track_ids=excluded_ids,
+            analysis_track_count=analysis_track_count
+        )
 
         if "error" in result:
             print(f"Error from recommendation service: {result['error']}")
             raise HTTPException(status_code=400, detail=result["error"])
 
-        print(f"Successfully generated {len(result.get('recommendations', []))} {recommender_type} recommendations")
+        print(f"Successfully generated {len(result.get('recommendations', []))} recommendations")
         return result
         
     except HTTPException:
         raise
     except Exception as e:
         print(f"Music discovery error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@router.post("/create-playlist", response_model=PlaylistCreationResponse)
+async def create_playlist_from_recommendations(
+    request: PlaylistCreationRequest,
+    token: str = Query(..., description="Spotify access token")
+):
+    """Create a Spotify playlist from recommendation track IDs"""
+    try:
+        print(f"Creating playlist '{request.name}' with {len(request.track_ids)} tracks")
+        
+        # Validate access token
+        try:
+            sp = spotify_service.create_spotify_client(token)
+            user_info = sp.me()
+            print(f"Creating playlist for user: {user_info.get('display_name', 'Unknown')}")
+        except Exception as auth_error:
+            print(f"Authentication failed: {auth_error}")
+            raise HTTPException(status_code=401, detail="Invalid or expired access token")
+        
+        # Validate track IDs
+        if not request.track_ids:
+            raise HTTPException(status_code=400, detail="No track IDs provided")
+        
+        if len(request.track_ids) > 10000:  # Spotify playlist limit
+            raise HTTPException(status_code=400, detail="Too many tracks (max 10,000)")
+        
+        # Create playlist description
+        description = request.description
+        if not description:
+            description = f"AI-generated playlist with {len(request.track_ids)} recommended tracks"
+        
+        # Create the playlist
+        playlist = spotify_service.create_playlist(
+            sp=sp,
+            name=request.name,
+            description=description,
+            public=request.public
+        )
+        
+        if not playlist:
+            raise HTTPException(status_code=500, detail="Failed to create playlist")
+        
+        # Add tracks to the playlist
+        success = spotify_service.add_tracks_to_playlist(
+            sp=sp,
+            playlist_id=playlist['id'],
+            track_ids=request.track_ids
+        )
+        
+        if not success:
+            # Playlist was created but adding tracks failed
+            return PlaylistCreationResponse(
+                success=False,
+                playlist_id=playlist['id'],
+                playlist_url=playlist['external_urls']['spotify'],
+                message="Playlist created but failed to add some tracks",
+                tracks_added=0
+            )
+        
+        print(f"✅ Successfully created playlist '{request.name}' with {len(request.track_ids)} tracks")
+        
+        return PlaylistCreationResponse(
+            success=True,
+            playlist_id=playlist['id'],
+            playlist_url=playlist['external_urls']['spotify'],
+            message=f"Successfully created playlist '{request.name}'",
+            tracks_added=len(request.track_ids)
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error creating playlist: {e}")
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")

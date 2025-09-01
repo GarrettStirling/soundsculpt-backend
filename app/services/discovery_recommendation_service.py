@@ -18,7 +18,7 @@ class DiscoveryRecommendationService:
     def __init__(self):
         self.spotify_service = SpotifyService()
     
-    def get_recommendations(self, access_token: str, n_recommendations: int = 30, user_preferences: Dict = None, generation_seed: int = 0, excluded_track_ids: set = None) -> Dict:
+    def get_recommendations(self, access_token: str, n_recommendations: int = 30, user_preferences: Dict = None, generation_seed: int = 0, excluded_track_ids: set = None, analysis_track_count: int = 1000) -> Dict:
         """
         Get recommendations using a genre-based discovery approach with performance profiling
         """
@@ -49,7 +49,7 @@ class DiscoveryRecommendationService:
             
             # Get user's existing tracks and analyze patterns using shared utilities
             print("📊 Getting user's music collection for analysis...")
-            user_tracks, artist_track_count = RecommendationUtils.get_user_tracks_simple(sp, max_tracks=2000)
+            user_tracks, artist_track_count = RecommendationUtils.get_user_tracks_simple(sp, max_tracks=analysis_track_count)
             
             # Add excluded track IDs to user tracks to avoid recommending them
             if excluded_track_ids:
@@ -114,4 +114,3 @@ class DiscoveryRecommendationService:
                 "execution_time_seconds": execution_time,
                 "recommendations": []
             }
-    
