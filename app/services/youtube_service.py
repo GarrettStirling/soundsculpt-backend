@@ -53,17 +53,38 @@ class YouTubeService:
                     artist_in_title = artist_name.lower() in title
                     artist_in_channel = artist_name.lower() in channel_title
                     
+                    # More strict matching - both track and artist should be present
+                    track_words = set(track_name.lower().split())
+                    artist_words = set(artist_name.lower().split())
+                    title_words = set(title.split())
+                    
+                    track_word_matches = len(track_words.intersection(title_words))
+                    artist_word_matches = len(artist_words.intersection(title_words)) or artist_in_channel
+                    
                     # Strict criteria for a match
                     is_official = any(keyword in title or keyword in description or keyword in channel_title 
                                     for keyword in ['official', 'vevo', 'records', 'music'])
                     
-                    # Must have both track and artist mentioned, and preferably be official
-                    if track_in_title and (artist_in_title or artist_in_channel):
+                    # Must have significant word overlap for both track and artist
+                    good_track_match = track_in_title or track_word_matches >= len(track_words) * 0.6
+                    good_artist_match = artist_in_title or artist_in_channel or artist_word_matches
+                    
+                    if good_track_match and good_artist_match:
                         # Additional verification: check video duration (music videos are typically 2-8 minutes)
                         video_id = item['id']['videoId']
                         video_details = self._get_video_details(video_id)
                         
                         if video_details and self._is_reasonable_duration(video_details.get('duration')):
+                            # Calculate confidence score
+                            confidence_score = 0
+                            if track_in_title: confidence_score += 30
+                            if artist_in_title or artist_in_channel: confidence_score += 30
+                            if is_official: confidence_score += 20
+                            if track_word_matches >= len(track_words) * 0.8: confidence_score += 10
+                            if artist_word_matches: confidence_score += 10
+                            
+                            confidence = 'high' if confidence_score >= 70 else 'medium' if confidence_score >= 50 else 'low'
+                            
                             # This looks like a good match
                             return {
                                 'video_id': video_id,
@@ -74,8 +95,9 @@ class YouTubeService:
                                 'view_count': video_details.get('view_count', 0),
                                 'youtube_url': f"https://www.youtube.com/watch?v={video_id}",
                                 'embed_url': f"https://www.youtube.com/embed/{video_id}?autoplay=1&controls=1&enablejsapi=1",
-                                'confidence': 'high' if is_official else 'medium',
-                                'search_query': query
+                                'confidence': confidence,
+                                'search_query': query,
+                                'match_score': confidence_score
                             }
             
             # If no good match found, return None instead of a poor match

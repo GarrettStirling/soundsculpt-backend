@@ -98,40 +98,6 @@ async def get_collection_size(token: str = Query(..., description="Spotify acces
         }
 
 
-@router.post("/ml-recommendations")
-async def get_ml_recommendations(
-    token: str,
-    n_recommendations: int = Query(30, ge=1, le=50, description="Number of songs to recommend"),
-    user_controls: Optional[Dict] = Body(None, description="User preference controls")
-):
-    """
-    Get personalized AI recommendations using user's listening history and preferences
-    """
-    try:
-        print(f"=== ML RECOMMENDATIONS ENDPOINT ===")
-        print(f"User controls: {user_controls}")
-        recommender_type = 'Discovery' if RECOMMENDATION_MODE == 'discovery' else 'Advanced'
-        print(f"Requesting {n_recommendations} {recommender_type} recommendations")
-        if RECOMMENDATION_MODE == 'discovery':
-            result = discovery_recommendation_service.get_recommendations(
-                access_token=token,
-                n_recommendations=n_recommendations
-            )
-        else:
-            result = advanced_recommendation_service.get_recommendations(
-                access_token=token,
-                n_recommendations=n_recommendations
-            )
-        if "error" in result:
-            raise HTTPException(status_code=400, detail=result["error"])
-        result["user_controls"] = user_controls
-        return result
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"AI recommendations error: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
 @router.get("/search-based-discovery")
 async def get_search_based_recommendations(
     token: str = Query(..., description="Spotify access token"),

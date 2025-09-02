@@ -123,12 +123,23 @@ class RecommendationUtils:
     @staticmethod
     def is_suspicious_track_name(name: str, context: str = "") -> bool:
         """
-        More intelligent filtering - only filter obvious genre names or empty titles
+        More intelligent filtering - only filter obvious genre names, empty titles, and live versions
         """
         if not name or len(name) < 2:
             return True
         
         name_lower = name.lower().strip()
+        
+        # Filter live versions and similar variants
+        live_indicators = [
+            'live', 'live at', 'live from', 'live in', 'live on', 'live version',
+            'live recording', 'concert', 'acoustic version', 'unplugged',
+            'live session', 'session', 'demo', 'rehearsal', 'soundcheck'
+        ]
+        
+        for indicator in live_indicators:
+            if indicator in name_lower:
+                return True
         
         # Only filter very obvious genre names that are short and exact matches
         exact_genre_names = {
