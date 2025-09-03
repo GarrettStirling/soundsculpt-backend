@@ -43,25 +43,6 @@ class PlaylistCreationResponse(BaseModel):
 discovery_recommendation_service = DiscoveryRecommendationService()
 spotify_service = SpotifyService()
 
-@router.get("/test-token")
-async def test_token(token: str = Query(..., description="Spotify access token")):
-    """Test if a Spotify access token is valid"""
-    try:
-        from app.services.spotify_service import SpotifyService
-        spotify_service = SpotifyService()
-        sp = spotify_service.create_spotify_client(token)
-        user_info = sp.me()
-        return {
-            "valid": True,
-            "user": user_info.get('display_name', 'Unknown'),
-            "user_id": user_info.get('id', 'Unknown')
-        }
-    except Exception as e:
-        return {
-            "valid": False,
-            "error": str(e)
-        }
-
 @router.get("/collection-size")
 async def get_collection_size(token: str = Query(..., description="Spotify access token")):
     """Get user's collection size for optimization warnings"""

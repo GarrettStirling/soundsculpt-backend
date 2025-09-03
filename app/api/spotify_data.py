@@ -380,31 +380,3 @@ async def get_user_playlists_simple(
     
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error fetching playlists: {str(e)}")
-
-@router.get("/test-deezer-connection")
-async def test_deezer_connection():
-    """
-    Test Deezer API connection with a known track
-    """
-    try:
-        # Test with a well-known track
-        test_result = deezer_service.search_track("Come A Little Closer", "Cage The Elephant")
-        
-        if test_result:
-            return {
-                "status": "success",
-                "message": "Deezer API connection working",
-                "test_track": test_result
-            }
-        else:
-            return {
-                "status": "no_preview",
-                "message": "Deezer API connected but no preview found for test track"
-            }
-            
-    except Exception as e:
-        return {
-            "status": "error", 
-            "message": f"Deezer API connection failed: {str(e)}",
-            "note": "Make sure RAPIDAPI_KEY is set in .env file"
-        }
