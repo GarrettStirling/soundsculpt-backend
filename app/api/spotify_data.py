@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Header, Query
 from app.services.spotify_service import SpotifyService
 from app.services.deezer_service import DeezerService
 from typing import Optional, Dict, List
+from pydantic import BaseModel
 import spotipy
 
 router = APIRouter(prefix="/spotify", tags=["Spotify Data"])
@@ -9,6 +10,9 @@ router = APIRouter(prefix="/spotify", tags=["Spotify Data"])
 # Initialize services
 spotify_service = SpotifyService()
 deezer_service = DeezerService()
+
+class UpdatePlaylistRequest(BaseModel):
+    track_uris: List[str]
 
 @router.get("/test-token")
 async def test_token(token: str):
@@ -351,16 +355,24 @@ async def search_spotify(
 @router.get("/user-playlists")
 async def get_user_playlists_simple(
     token: str = Query(..., description="Spotify access token"),
-    limit: int = Query(50, description="Number of playlists to return")
+    limit: int = Query(50, description="Number of playlists to return per request")
 ):
     """Get user's saved playlists with simple query parameter"""
     try:
         sp = spotify_service.create_spotify_client(token)
         
+        # Get all playlists by paginating through results
+        all_playlists = []
         results = sp.current_user_playlists(limit=limit)
+        all_playlists.extend(results['items'])
+        
+        # Continue fetching if there are more playlists
+        while results['next']:
+            results = sp.next(results)
+            all_playlists.extend(results['items'])
         
         playlists = []
-        for playlist in results['items']:
+        for playlist in all_playlists:
             playlists.append({
                 "id": playlist['id'],
                 "name": playlist['name'],
@@ -370,7 +382,10 @@ async def get_user_playlists_simple(
                 "collaborative": playlist['collaborative'],
                 "external_urls": playlist['external_urls'],
                 "images": playlist['images'],
-                "owner": playlist['owner']['display_name']
+                "owner": {
+                    "id": playlist['owner']['id'],
+                    "display_name": playlist['owner']['display_name']
+                }
             })
         
         return {
@@ -380,3 +395,97 @@ async def get_user_playlists_simple(
     
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error fetching playlists: {str(e)}")
+
+@router.get("/playlist-tracks")
+async def get_playlist_tracks(
+    token: str = Query(..., description="Spotify access token"),
+    playlist_id: str = Query(..., description="Spotify playlist ID")
+):
+    """
+    Get tracks from a specific Spotify playlist
+    """
+    try:
+        sp = spotify_service.create_spotify_client(token)
+        
+        # Get all playlist tracks with pagination
+        tracks = []
+        results = sp.playlist_tracks(playlist_id, limit=50)
+        tracks.extend(results['items'])
+        
+        # Continue fetching if there are more tracks
+        while results['next']:
+            results = sp.next(results)
+            tracks.extend(results['items'])
+        
+        track_list = []
+        for item in tracks:
+            if item['track'] and item['track']['type'] == 'track':
+                track = item['track']
+                
+                # Get artist names
+                artists = ', '.join([artist['name'] for artist in track['artists']])
+                
+                # Build track data
+                track_data = {
+                    "id": track['id'],
+                    "uri": track['uri'],  # Add URI for playlist updates
+                    "name": track['name'],
+                    "artist": artists,
+                    "album": track['album']['name'],
+                    "duration_ms": track['duration_ms'],
+                    "external_url": track['external_urls']['spotify'],
+                    "preview_url": track.get('preview_url'),
+                    "images": track['album'].get('images', [])
+                }
+                
+                track_list.append(track_data)
+        
+        return {
+            "tracks": track_list,
+            "total": len(track_list)
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error fetching playlist tracks: {str(e)}")
+
+@router.put("/update-playlist")
+async def update_playlist(
+    request: UpdatePlaylistRequest,
+    token: str = Query(...),
+    playlist_id: str = Query(...)
+):
+    """Update a playlist with new track order"""
+    try:
+        sp = spotify_service.create_spotify_client(token)
+        
+        print(f"🎵 Updating playlist {playlist_id} with {len(request.track_uris)} tracks")
+        print(f"🎵 Track URIs: {request.track_uris[:3]}...") # Show first 3 for debugging
+        
+        # Replace all tracks in the playlist with the new order
+        # Use the correct spotipy method: playlist_replace_tracks
+        batch_size = 100
+        all_results = []
+        
+        for i in range(0, len(request.track_uris), batch_size):
+            batch = request.track_uris[i:i + batch_size]
+            if i == 0:
+                # Replace for first batch
+                result = sp.playlist_replace_tracks(playlist_id, batch)
+                all_results.append(result)
+            else:
+                # Add for subsequent batches  
+                result = sp.playlist_add_tracks(playlist_id, batch)
+                all_results.append(result)
+        
+        print(f"✅ Playlist updated successfully")
+        
+        return {
+            "success": True,
+            "message": "Playlist updated successfully",
+            "snapshot_id": all_results[0].get("snapshot_id") if all_results else None
+        }
+        
+    except Exception as e:
+        print(f"❌ Error updating playlist: {str(e)}")
+        print(f"❌ Error type: {type(e)}")
+        raise HTTPException(status_code=400, detail=f"Error updating playlist: {str(e)}")

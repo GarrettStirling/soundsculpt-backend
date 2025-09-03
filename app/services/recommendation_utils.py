@@ -134,7 +134,8 @@ class RecommendationUtils:
         live_indicators = [
             'live', 'live at', 'live from', 'live in', 'live on', 'live version',
             'live recording', 'concert', 'acoustic version', 'unplugged',
-            'live session', 'session', 'demo', 'rehearsal', 'soundcheck'
+            'live session', 'session', 'demo', 'rehearsal', 'soundcheck',
+            'commentary'
         ]
         
         for indicator in live_indicators:
