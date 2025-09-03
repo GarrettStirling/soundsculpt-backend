@@ -285,6 +285,102 @@ async def get_deezer_preview(
             "error": str(e)
         }
 
+@router.get("/search")
+async def search_spotify(
+    token: str = Query(..., description="Spotify access token"),
+    query: str = Query(..., description="Search query"),
+    search_type: str = Query("track", description="Search type: track, artist, album, playlist"),
+    limit: int = Query(20, description="Number of results to return")
+):
+    """Search Spotify for tracks, artists, albums, or playlists"""
+    try:
+        sp = spotify_service.create_spotify_client(token)
+        
+        results = sp.search(q=query, type=search_type, limit=limit)
+        
+        if search_type == "track":
+            items = results['tracks']['items']
+            formatted_items = []
+            for item in items:
+                formatted_items.append({
+                    "id": item['id'],
+                    "name": item['name'],
+                    "artist": ", ".join([artist['name'] for artist in item['artists']]),
+                    "album": item['album']['name'],
+                    "duration_ms": item['duration_ms'],
+                    "popularity": item['popularity'],
+                    "external_urls": item['external_urls'],
+                    "preview_url": item.get('preview_url'),
+                    "images": item['album']['images']
+                })
+        elif search_type == "artist":
+            items = results['artists']['items']
+            formatted_items = []
+            for item in items:
+                formatted_items.append({
+                    "id": item['id'],
+                    "name": item['name'],
+                    "genres": item['genres'],
+                    "popularity": item['popularity'],
+                    "followers": item['followers']['total'],
+                    "external_urls": item['external_urls'],
+                    "images": item['images']
+                })
+        else:
+            # For album and playlist, return basic structure
+            items = results[f'{search_type}s']['items']
+            formatted_items = []
+            for item in items:
+                formatted_items.append({
+                    "id": item['id'],
+                    "name": item['name'],
+                    "external_urls": item['external_urls'],
+                    "images": item.get('images', [])
+                })
+        
+        return {
+            "results": formatted_items,
+            "total": len(formatted_items),
+            "query": query,
+            "type": search_type
+        }
+    
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Search error: {str(e)}")
+
+@router.get("/user-playlists")
+async def get_user_playlists_simple(
+    token: str = Query(..., description="Spotify access token"),
+    limit: int = Query(50, description="Number of playlists to return")
+):
+    """Get user's saved playlists with simple query parameter"""
+    try:
+        sp = spotify_service.create_spotify_client(token)
+        
+        results = sp.current_user_playlists(limit=limit)
+        
+        playlists = []
+        for playlist in results['items']:
+            playlists.append({
+                "id": playlist['id'],
+                "name": playlist['name'],
+                "description": playlist['description'],
+                "tracks_total": playlist['tracks']['total'],
+                "public": playlist['public'],
+                "collaborative": playlist['collaborative'],
+                "external_urls": playlist['external_urls'],
+                "images": playlist['images'],
+                "owner": playlist['owner']['display_name']
+            })
+        
+        return {
+            "playlists": playlists,
+            "total": len(playlists)
+        }
+    
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error fetching playlists: {str(e)}")
+
 @router.get("/test-deezer-connection")
 async def test_deezer_connection():
     """
