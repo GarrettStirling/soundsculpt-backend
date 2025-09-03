@@ -10,6 +10,7 @@ import asyncio
 import time
 from app.services.discovery_recommendation_service import DiscoveryRecommendationService
 from app.services.spotify_service import SpotifyService
+from app.services.recommendation_utils import RecommendationUtils
 from typing import List, Optional, Dict
 from pydantic import BaseModel
 
@@ -22,6 +23,7 @@ class ManualRecommendationRequest(BaseModel):
     seed_playlists: Optional[List[str]] = []  # Playlist IDs
     popularity: Optional[int] = 50  # 0-100
     n_recommendations: Optional[int] = 20
+    excluded_track_ids: Optional[List[str]] = []  # Previously generated track IDs to exclude
 
 class PlaylistCreationRequest(BaseModel):
     name: str
@@ -349,94 +351,337 @@ async def get_manual_recommendations(
         
         print(f"Using {len(valid_track_ids)} validated seed tracks: {valid_track_ids}")
         
-        # Since Spotify's recommendations endpoint is deprecated for new apps,
-        # we'll use an alternative approach: get related artists and their top tracks
+        # Non-deprecated API strategy - avoid Related Artists & Recommendations endpoints
         try:
-            print(f"🎵 Using alternative recommendation strategy (Spotify recommendations API is deprecated)")
+            print(f"🎵 Using ARTIST-DIVERSE strategy (one song per artist, maximum variety)")
             all_recommendations = []
             seen_track_ids = set(valid_track_ids)  # Don't recommend the seed tracks
             
-            # Get artists from seed tracks
-            seed_artists = set()
-            for track_id in valid_track_ids[:3]:  # Limit to first 3 tracks to avoid rate limits
+            # Add excluded track IDs to prevent cross-generation duplicates
+            if request.excluded_track_ids:
+                seen_track_ids.update(request.excluded_track_ids)
+                print(f"🚫 Excluding {len(request.excluded_track_ids)} previously recommended tracks")
+            
+            seen_artists = set()  # Track artists we've already recommended
+            current_seed_tracks = valid_track_ids.copy()
+            iteration = 0
+            max_iterations = 4
+            
+            # Get artists from seed tracks to avoid recommending them again
+            for track_id in valid_track_ids:
                 try:
                     track_info = sp.track(track_id)
                     for artist in track_info['artists']:
-                        seed_artists.add(artist['id'])
+                        seen_artists.add(artist['id'])
+                        print(f"Excluding seed artist: {artist['name']} ({artist['id']})")
                 except Exception as e:
-                    print(f"Error getting track info for {track_id}: {e}")
                     continue
             
-            print(f"Found {len(seed_artists)} unique artists from seed tracks")
-            
-            # For each seed artist, get related artists and their top tracks
-            for artist_id in list(seed_artists)[:2]:  # Limit to 2 artists to avoid too many API calls
-                try:
-                    # Get related artists
-                    related_response = sp.artist_related_artists(artist_id)
-                    related_artists = related_response['artists'][:5]  # Top 5 related artists
-                    print(f"Found {len(related_artists)} related artists for {artist_id}")
+            while len(all_recommendations) < request.n_recommendations and iteration < max_iterations:
+                iteration += 1
+                print(f"🔄 Iteration {iteration}: Current recommendations: {len(all_recommendations)}/{request.n_recommendations}")
+                print(f"Artists already used: {len(seen_artists)}")
+                
+                # Get artists from current seed tracks for exploration
+                seed_artists = set()
+                tracks_to_analyze = current_seed_tracks[:8]
+                
+                for track_id in tracks_to_analyze:
+                    try:
+                        track_info = sp.track(track_id)
+                        for artist in track_info['artists']:
+                            seed_artists.add(artist['id'])
+                    except Exception as e:
+                        print(f"Error getting track info for {track_id}: {e}")
+                        continue
+                
+                print(f"Found {len(seed_artists)} seed artists to explore for related content")
+                
+                # Collect new recommendations from this iteration
+                iteration_recommendations = []
+                artists_to_explore = list(seed_artists)[:6]
+                
+                # Strategy 1: Search for tracks by genre/style keywords from seed tracks
+                if len(all_recommendations) + len(iteration_recommendations) < request.n_recommendations:
+                    print(f"🔍 Strategy 1: Genre/style-based search for diverse artists")
                     
-                    # Get top tracks from related artists
-                    for related_artist in related_artists:
-                        if len(all_recommendations) >= request.n_recommendations:
+                    # Get genres from seed artists
+                    search_genres = set()
+                    for artist_id in artists_to_explore[:3]:  # Top 3 seed artists
+                        try:
+                            artist_info = sp.artist(artist_id)
+                            genres = artist_info.get('genres', [])
+                            search_genres.update(genres[:2])  # Top 2 genres per artist
+                            print(f"Artist {artist_info['name']} genres: {genres[:2]}")
+                        except Exception as e:
+                            continue
+                    
+                    # Search by each genre to find different artists
+                    for genre in list(search_genres)[:4]:  # Use up to 4 genres
+                        if len(all_recommendations) + len(iteration_recommendations) >= request.n_recommendations:
                             break
                         try:
-                            top_tracks = sp.artist_top_tracks(related_artist['id'])
-                            for track in top_tracks['tracks'][:3]:  # Top 3 tracks per related artist
-                                if track['id'] not in seen_track_ids and len(all_recommendations) < request.n_recommendations:
-                                    all_recommendations.append(track)
-                                    seen_track_ids.add(track['id'])
-                        except Exception as e:
-                            print(f"Error getting top tracks for related artist {related_artist['id']}: {e}")
-                            continue
+                            search_results = sp.search(q=f'genre:"{genre}"', type='track', limit=30)
+                            genre_tracks = search_results.get('tracks', {}).get('items', [])
                             
-                except Exception as e:
-                    print(f"Error getting related artists for {artist_id}: {e}")
-                    continue
-            
-            # If we don't have enough recommendations, add some top tracks from the seed artists themselves
-            if len(all_recommendations) < request.n_recommendations:
-                for artist_id in seed_artists:
-                    if len(all_recommendations) >= request.n_recommendations:
+                            tracks_added_from_genre = 0
+                            for track in genre_tracks:
+                                if len(all_recommendations) + len(iteration_recommendations) >= request.n_recommendations:
+                                    break
+                                
+                                # Check if this artist is new (not in seen_artists)
+                                track_artist_id = track['artists'][0]['id'] if track.get('artists') else None
+                                if (track_artist_id and track_artist_id not in seen_artists and 
+                                    track['id'] not in seen_track_ids):
+                                    iteration_recommendations.append(track)
+                                    seen_track_ids.add(track['id'])
+                                    seen_artists.add(track_artist_id)
+                                    tracks_added_from_genre += 1
+                                    print(f"  ✅ Added from genre '{genre}': {track['name']} by {track['artists'][0]['name']}")
+                            
+                            print(f"Added {tracks_added_from_genre} tracks from genre: {genre}")
+                            
+                        except Exception as e:
+                            print(f"Error searching for genre {genre}: {e}")
+                            continue
+                
+                # Strategy 2: Year-based discovery (find tracks from same era)
+                if len(all_recommendations) + len(iteration_recommendations) < request.n_recommendations:
+                    print(f"📅 Strategy 2: Year-based discovery for diverse artists")
+                    
+                    # Get release years from seed tracks
+                    seed_years = set()
+                    for track_id in tracks_to_analyze[:3]:
+                        try:
+                            track_info = sp.track(track_id)
+                            album_info = sp.album(track_info['album']['id'])
+                            release_date = album_info.get('release_date', '')
+                            if release_date:
+                                year = release_date[:4]
+                                seed_years.add(year)
+                                print(f"Seed track year: {year}")
+                        except Exception as e:
+                            continue
+                    
+                    # Search for tracks from the same years
+                    for year in list(seed_years):
+                        if len(all_recommendations) + len(iteration_recommendations) >= request.n_recommendations:
+                            break
+                        try:
+                            search_results = sp.search(q=f'year:{year}', type='track', limit=25)
+                            year_tracks = search_results.get('tracks', {}).get('items', [])
+                            
+                            tracks_added_from_year = 0
+                            for track in year_tracks:
+                                if len(all_recommendations) + len(iteration_recommendations) >= request.n_recommendations:
+                                    break
+                                
+                                track_artist_id = track['artists'][0]['id'] if track.get('artists') else None
+                                if (track_artist_id and track_artist_id not in seen_artists and 
+                                    track['id'] not in seen_track_ids):
+                                    iteration_recommendations.append(track)
+                                    seen_track_ids.add(track['id'])
+                                    seen_artists.add(track_artist_id)
+                                    tracks_added_from_year += 1
+                                    print(f"  ✅ Added from year {year}: {track['name']} by {track['artists'][0]['name']}")
+                            
+                            print(f"Added {tracks_added_from_year} tracks from year: {year}")
+                            
+                        except Exception as e:
+                            print(f"Error searching for year {year}: {e}")
+                            continue
+                
+                # Strategy 3: Broad search using track name keywords from seeds
+                if len(all_recommendations) + len(iteration_recommendations) < request.n_recommendations:
+                    print(f"🔤 Strategy 3: Keyword-based search for diverse artists")
+                    
+                    for seed_track_id in current_seed_tracks[:2]:
+                        if len(all_recommendations) + len(iteration_recommendations) >= request.n_recommendations:
+                            break
+                        try:
+                            seed_track_info = sp.track(seed_track_id)
+                            track_name = seed_track_info['name']
+                            
+                            # Extract keywords (take first word from track name)
+                            keywords = track_name.split()[:2]  # First 2 words
+                            
+                            for keyword in keywords:
+                                if len(keyword) > 3:  # Only meaningful words
+                                    try:
+                                        search_results = sp.search(q=keyword, type='track', limit=20)
+                                        keyword_tracks = search_results.get('tracks', {}).get('items', [])
+                                        
+                                        tracks_added_from_keyword = 0
+                                        for track in keyword_tracks:
+                                            if len(all_recommendations) + len(iteration_recommendations) >= request.n_recommendations:
+                                                break
+                                            
+                                            track_artist_id = track['artists'][0]['id'] if track.get('artists') else None
+                                            if (track_artist_id and track_artist_id not in seen_artists and 
+                                                track['id'] not in seen_track_ids):
+                                                iteration_recommendations.append(track)
+                                                seen_track_ids.add(track['id'])
+                                                seen_artists.add(track_artist_id)
+                                                tracks_added_from_keyword += 1
+                                                print(f"  ✅ Added from keyword '{keyword}': {track['name']} by {track['artists'][0]['name']}")
+                                        
+                                        print(f"Added {tracks_added_from_keyword} tracks from keyword: {keyword}")
+                                        
+                                    except Exception as e:
+                                        continue
+                        except Exception as e:
+                            continue
+                
+                # Add this iteration's recommendations to the main list
+                all_recommendations.extend(iteration_recommendations)
+                print(f"Added {len(iteration_recommendations)} recommendations in iteration {iteration}")
+                print(f"Total unique artists found: {len(seen_artists)}")
+                
+                # Prepare seeds for next iteration (use newly found tracks as seeds)
+                if iteration_recommendations and iteration < max_iterations:
+                    # Use tracks from different artists as seeds for next iteration
+                    current_seed_tracks = [track['id'] for track in iteration_recommendations[:4]]
+                    print(f"Using {len(current_seed_tracks)} new tracks as seeds for next iteration")
+                else:
+                    print("No new tracks found for next iteration or max iterations reached")
+                    break
+                for artist_id in artists_to_explore:
+                    if len(all_recommendations) + len(iteration_recommendations) >= request.n_recommendations:
                         break
                     try:
-                        top_tracks = sp.artist_top_tracks(artist_id)
-                        for track in top_tracks['tracks']:
-                            if track['id'] not in seen_track_ids and len(all_recommendations) < request.n_recommendations:
-                                all_recommendations.append(track)
-                                seen_track_ids.add(track['id'])
+                        print(f"🎼 Deep diving into discography for artist: {artist_id}")
+                        # Get ALL types of releases
+                        albums = sp.artist_albums(artist_id, album_type='album,single,compilation', limit=15)
+                        albums_to_check = albums['items'][:10]  # Check more albums
+                        
+                        albums_processed = 0
+                        for album in albums_to_check:
+                            if len(all_recommendations) + len(iteration_recommendations) >= request.n_recommendations:
+                                break
+                            try:
+                                album_tracks = sp.album_tracks(album['id'], limit=20)
+                                tracks_to_add = min(5, len(album_tracks['items']))  # Up to 5 tracks per album
+                                tracks_added_from_album = 0
+                                
+                                for track in album_tracks['items'][:tracks_to_add]:
+                                    if (track['id'] and track['id'] not in seen_track_ids and 
+                                        len(all_recommendations) + len(iteration_recommendations) < request.n_recommendations):
+                                        try:
+                                            # Get full track info (album_tracks doesn't include full album info)
+                                            full_track = sp.track(track['id'])
+                                            if full_track and full_track.get('is_playable', True) and not full_track.get('is_local', False):
+                                                iteration_recommendations.append(full_track)
+                                                seen_track_ids.add(track['id'])
+                                                tracks_added_from_album += 1
+                                                print(f"  ✅ Added: {full_track['name']} from {album['name']}")
+                                        except Exception as e:
+                                            print(f"Error getting full track info for {track['id']}: {e}")
+                                            continue
+                                
+                                if tracks_added_from_album > 0:
+                                    albums_processed += 1
+                                    print(f"  📀 Album '{album['name']}': Added {tracks_added_from_album} tracks")
+                                    
+                            except Exception as e:
+                                print(f"Error getting tracks from album {album['id']}: {e}")
+                                continue
+                        
+                        print(f"Processed {albums_processed} albums for artist {artist_id}")
+                                
                     except Exception as e:
-                        print(f"Error getting top tracks for seed artist {artist_id}: {e}")
+                        print(f"Error getting albums for artist {artist_id}: {e}")
                         continue
+                
+                # Strategy 2: If still need more, get artist's top tracks and featured tracks
+                if len(all_recommendations) + len(iteration_recommendations) < request.n_recommendations:
+                    print(f"� Strategy 2: Getting top tracks from {len(artists_to_explore)} artists")
+                    for artist_id in artists_to_explore:
+                        if len(all_recommendations) + len(iteration_recommendations) >= request.n_recommendations:
+                            break
+                        try:
+                            top_tracks = sp.artist_top_tracks(artist_id)
+                            tracks_added = 0
+                            for track in top_tracks['tracks']:
+                                if (track['id'] not in seen_track_ids and 
+                                    len(all_recommendations) + len(iteration_recommendations) < request.n_recommendations):
+                                    iteration_recommendations.append(track)
+                                    seen_track_ids.add(track['id'])
+                                    tracks_added += 1
+                                    print(f"  ✅ Top track: {track['name']}")
+                            print(f"Added {tracks_added} top tracks from artist {artist_id}")
+                        except Exception as e:
+                            print(f"Error getting top tracks for artist {artist_id}: {e}")
+                            continue
+                
+                # Strategy 3: Search for tracks with similar names/keywords from our seeds
+                if len(all_recommendations) + len(iteration_recommendations) < request.n_recommendations:
+                    print(f"🔍 Strategy 3: Keyword-based search from seed tracks")
+                    for seed_track_id in current_seed_tracks[:3]:  # Use first 3 seed tracks for search
+                        if len(all_recommendations) + len(iteration_recommendations) >= request.n_recommendations:
+                            break
+                        try:
+                            seed_track_info = sp.track(seed_track_id)
+                            # Extract keywords from track name for search
+                            track_name = seed_track_info['name']
+                            artist_name = seed_track_info['artists'][0]['name']
+                            
+                            # Search using artist name to find similar artists' tracks
+                            search_results = sp.search(q=f'artist:"{artist_name}"', type='track', limit=20)
+                            tracks_added = 0
+                            
+                            for track in search_results['tracks']['items']:
+                                if (track['id'] not in seen_track_ids and 
+                                    len(all_recommendations) + len(iteration_recommendations) < request.n_recommendations and
+                                    track['artists'][0]['id'] != seed_track_info['artists'][0]['id']):  # Different artist
+                                    iteration_recommendations.append(track)
+                                    seen_track_ids.add(track['id'])
+                                    tracks_added += 1
+                                    print(f"  🔍 Search result: {track['name']} by {track['artists'][0]['name']}")
+                            
+                            print(f"Added {tracks_added} tracks from search based on '{artist_name}'")
+                            
+                        except Exception as e:
+                            print(f"Error in search strategy for seed {seed_track_id}: {e}")
+                            continue
+                
+                # Add this iteration's recommendations to the main list
+                all_recommendations.extend(iteration_recommendations)
+                print(f"Added {len(iteration_recommendations)} recommendations in iteration {iteration}")
+                
+                # Prepare seeds for next iteration (use newly found tracks as seeds)
+                if iteration_recommendations and iteration < max_iterations:
+                    # Use tracks from different artists as seeds for next iteration
+                    next_seeds = []
+                    artists_used = set()
+                    for track in iteration_recommendations[:8]:  # More seeds for next iteration
+                        track_artist = track.get('artists', [{}])[0].get('id')
+                        if track_artist and track_artist not in artists_used:
+                            next_seeds.append(track['id'])
+                            artists_used.add(track_artist)
+                    
+                    current_seed_tracks = next_seeds if next_seeds else current_seed_tracks
+                    print(f"Using {len(current_seed_tracks)} tracks from different artists as seeds for next iteration")
+                else:
+                    print("No new tracks found for next iteration or max iterations reached")
+                    break  # No new recommendations found, stop iterating
             
-            print(f"✅ Generated {len(all_recommendations)} recommendations using related artists approach")
+            print(f"✅ Generated {len(all_recommendations)} recommendations using ARTIST-DIVERSE strategy")
+            print(f"Total unique artists: {len(seen_artists)}")
             
         except Exception as e:
-            print(f"Error in alternative recommendation strategy: {e}")
+            print(f"Error in ARTIST-DIVERSE strategy: {e}")
             raise HTTPException(status_code=500, detail=f"Unable to generate recommendations: {str(e)}")
         
-        # Format recommendations
+        # Format recommendations using standardized format
         recommendations = []
         for track in all_recommendations:
-            recommendations.append({
-                "id": track['id'],
-                "name": track['name'],
-                "artist": ", ".join([artist['name'] for artist in track['artists']]),
-                "album": track['album']['name'],
-                "duration_ms": track['duration_ms'],
-                "popularity": track['popularity'],
-                "external_urls": track['external_urls'],
-                "preview_url": track.get('preview_url'),
-                "images": track['album']['images'],
-                "audio_features": None  # We could fetch this separately if needed
-            })
+            recommendations.append(RecommendationUtils.format_track_recommendation(track, "Manual Discovery"))
         
         print(f"✅ Generated {len(recommendations)} manual recommendations")
         
         return {
             "recommendations": recommendations,
-            "algorithm": "Related Artists Discovery (Spotify Recommendations API Deprecated)",
+            "algorithm": "Artist-Diverse Discovery (Genre + Year + Keyword Search)",
             "seeds_used": {
                 "track_count": len(request.seed_tracks),
                 "artist_count": len(request.seed_artists),
@@ -446,6 +691,11 @@ async def get_manual_recommendations(
             },
             "user_preferences": {
                 "popularity": request.popularity
+            },
+            "generation_stats": {
+                "requested": request.n_recommendations,
+                "generated": len(recommendations),
+                "iterations_used": iteration
             }
         }
         
