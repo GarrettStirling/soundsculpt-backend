@@ -454,37 +454,60 @@ async def update_playlist(
     token: str = Query(...),
     playlist_id: str = Query(...)
 ):
-    """Update a playlist with new track order"""
+    """Update a playlist with new track order using direct Spotify Web API"""
     try:
-        sp = spotify_service.create_spotify_client(token)
+        import requests
         
         print(f"🎵 Updating playlist {playlist_id} with {len(request.track_uris)} tracks")
         print(f"🎵 Track URIs: {request.track_uris[:3]}...") # Show first 3 for debugging
         
-        # Replace all tracks in the playlist with the new order
-        # Use the correct spotipy method: playlist_replace_tracks
+        # Use direct Spotify Web API PUT request to replace all tracks
+        headers = {
+            'Authorization': f'Bearer {token}',
+            'Content-Type': 'application/json'
+        }
+        
+        # Spotify Web API can handle up to 100 tracks per request
         batch_size = 100
-        all_results = []
+        all_snapshot_ids = []
         
         for i in range(0, len(request.track_uris), batch_size):
             batch = request.track_uris[i:i + batch_size]
+            
             if i == 0:
-                # Replace for first batch
-                result = sp.playlist_replace_tracks(playlist_id, batch)
-                all_results.append(result)
+                # Replace all tracks for the first batch using PUT
+                url = f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks"
+                data = {"uris": batch}
+                response = requests.put(url, headers=headers, json=data)
             else:
-                # Add for subsequent batches  
-                result = sp.playlist_add_tracks(playlist_id, batch)
-                all_results.append(result)
+                # Add additional tracks using POST
+                url = f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks"
+                data = {"uris": batch}
+                response = requests.post(url, headers=headers, json=data)
+            
+            if response.status_code not in [200, 201]:
+                error_detail = response.json() if response.content else {"error": "Unknown error"}
+                print(f"❌ Spotify API Error: Status {response.status_code}, Details: {error_detail}")
+                raise HTTPException(
+                    status_code=response.status_code, 
+                    detail=f"Spotify API error: {error_detail}"
+                )
+            
+            result = response.json()
+            if "snapshot_id" in result:
+                all_snapshot_ids.append(result["snapshot_id"])
         
         print(f"✅ Playlist updated successfully")
         
         return {
             "success": True,
             "message": "Playlist updated successfully",
-            "snapshot_id": all_results[0].get("snapshot_id") if all_results else None
+            "snapshot_id": all_snapshot_ids[0] if all_snapshot_ids else None,
+            "total_batches": len(all_snapshot_ids)
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"❌ Error updating playlist: {str(e)}")
         print(f"❌ Error type: {type(e)}")
