@@ -159,7 +159,6 @@ async def create_playlist_from_recommendations(
     """Create a Spotify playlist from recommendation track IDs"""
     try:
         print(f"Creating playlist '{request.name}' with {len(request.track_ids)} tracks")
-        
         # Validate access token
         try:
             sp = spotify_service.create_spotify_client(token)
@@ -330,7 +329,7 @@ async def get_manual_recommendations(
         if not valid_track_ids:
             raise HTTPException(status_code=400, detail="No valid track IDs found in seeds. The selected tracks may not be available in your region or may have been removed from Spotify.")
         
-        print(f"Using {len(valid_track_ids)} validated seed tracks: {valid_track_ids}")
+        print(f"Using {len(valid_track_ids)} validated seed tracks")
         
         # Non-deprecated API strategy - avoid Related Artists & Recommendations endpoints
         try:

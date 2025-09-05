@@ -157,6 +157,7 @@ class SpotifyService:
     def add_tracks_to_playlist(self, sp: spotipy.Spotify, playlist_id: str, track_ids: List[str]) -> bool:
         """Add tracks to an existing playlist"""
         try:
+            print(f"Adding {len(track_ids)} tracks to playlist {playlist_id}")  # DEBUG
             # Spotify API allows max 100 tracks per request
             for i in range(0, len(track_ids), 100):
                 batch = track_ids[i:i+100]
