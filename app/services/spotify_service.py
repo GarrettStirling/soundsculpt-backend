@@ -32,7 +32,7 @@ class SpotifyService:
     
     def get_auth_url(self) -> str:
         """Get the authorization URL for Spotify login"""
-        return self.sp_oauth.get_authorize_url()
+        return self.sp_oauth.get_authorize_url(state="state")
     
     def get_access_token(self, code: str) -> Optional[Dict]:
         """Exchange authorization code for access token"""
