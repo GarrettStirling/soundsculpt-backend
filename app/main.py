@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Query, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from app.api import auth, spotify_data, recommendations, youtube
+from app.api import auth, spotify_data, recommendations_lastfm as recommendations, youtube
 from app.services.spotify_service import SpotifyService
 import os
 import sys

@@ -11,6 +11,7 @@ import time
 from app.services.discovery_recommendation_service import DiscoveryRecommendationService
 from app.services.spotify_service import SpotifyService
 from app.services.recommendation_utils import RecommendationUtils
+from app.services.bpm_recommendation_service import BPMRecommendationService
 from typing import List, Optional, Dict
 from pydantic import BaseModel
 
@@ -42,6 +43,7 @@ class PlaylistCreationResponse(BaseModel):
 # Initialize services
 discovery_recommendation_service = DiscoveryRecommendationService()
 spotify_service = SpotifyService()
+bpm_recommendation_service = BPMRecommendationService()
 
 @router.get("/collection-size")
 async def get_collection_size(token: str = Query(..., description="Spotify access token")):
@@ -126,15 +128,45 @@ async def get_search_based_recommendations(
         if not token or len(token) < 10:
             raise HTTPException(status_code=400, detail="Invalid or missing access token")
 
-        # Use the discovery recommendation service
-        result = discovery_recommendation_service.get_recommendations(
-            access_token=token,
-            n_recommendations=n_recommendations,
-            user_preferences=user_preferences if user_preferences else None,
-            generation_seed=generation_seed,
-            excluded_track_ids=excluded_ids,
-            analysis_track_count=analysis_track_count
-        )
+        # Use BPM-based auto discovery
+        sp = spotify_service.create_spotify_client(token)
+        
+        # Get user's recent tracks for BPM analysis
+        try:
+            user_tracks = []
+            # Get recently played tracks
+            recent_tracks = sp.current_user_recently_played(limit=50)
+            for item in recent_tracks.get('items', []):
+                if item.get('track'):
+                    user_tracks.append(item['track'])
+            
+            # Get user's saved tracks if we need more data
+            if len(user_tracks) < 20:
+                saved_tracks = sp.current_user_saved_tracks(limit=50)
+                for item in saved_tracks.get('items', []):
+                    if item.get('track'):
+                        user_tracks.append(item['track'])
+            
+            print(f"Analyzing {len(user_tracks)} user tracks for BPM-based recommendations")
+            
+            # Use BPM-based auto discovery
+            result = bpm_recommendation_service.get_auto_discovery_recommendations(
+                user_tracks=user_tracks,
+                n_recommendations=n_recommendations,
+                excluded_track_ids=excluded_ids
+            )
+            
+        except Exception as e:
+            print(f"Error getting user tracks for BPM analysis: {e}")
+            # Fallback to original discovery service
+            result = discovery_recommendation_service.get_recommendations(
+                access_token=token,
+                n_recommendations=n_recommendations,
+                user_preferences=user_preferences if user_preferences else None,
+                generation_seed=generation_seed,
+                excluded_track_ids=excluded_ids,
+                analysis_track_count=analysis_track_count
+            )
 
         if "error" in result:
             print(f"Error from recommendation service: {result['error']}")
@@ -232,29 +264,26 @@ async def get_manual_recommendations(
     token: str = Query(..., description="Spotify access token")
 ):
     """
-    Get recommendations based on manually selected seed tracks, artists, and/or playlists
+    Get BPM-based recommendations for manually selected seed tracks
     """
     try:
-        print(f"=== MANUAL DISCOVERY ENDPOINT ===")
+        print(f"=== BPM-BASED MANUAL DISCOVERY ENDPOINT ===")
         print(f"Seed tracks: {len(request.seed_tracks)}")
-        print(f"Seed artists: {len(request.seed_artists)}")
-        print(f"Seed playlists: {len(request.seed_playlists)}")
-        print(f"Popularity preference: {request.popularity}")
         print(f"Requested recommendations: {request.n_recommendations}")
         
         if not token or len(token) < 10:
             raise HTTPException(status_code=400, detail="Invalid or missing access token")
         
-        # Validate at least one seed is provided
-        if not any([request.seed_tracks, request.seed_artists, request.seed_playlists]):
-            raise HTTPException(status_code=400, detail="At least one seed (track, artist, or playlist) must be provided")
+        # Validate at least one seed track is provided
+        if not request.seed_tracks:
+            raise HTTPException(status_code=400, detail="At least one seed track must be provided for BPM-based recommendations")
         
         sp = spotify_service.create_spotify_client(token)
         
         # Test authentication
         try:
             user_info = sp.me()
-            print(f"Creating recommendations for user: {user_info.get('display_name', 'Unknown')}")
+            print(f"Creating BPM-based recommendations for user: {user_info.get('display_name', 'Unknown')}")
         except Exception as auth_error:
             print(f"Authentication failed: {auth_error}")
             raise HTTPException(status_code=401, detail="Invalid or expired access token")
