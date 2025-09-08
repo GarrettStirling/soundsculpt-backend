@@ -11,7 +11,6 @@ import time
 import queue
 import threading
 from app.services.spotify_service import SpotifyService
-from app.services.recommendation_utils import RecommendationUtils
 from app.services.lastfm_recommendation_service import LastFMRecommendationService
 from typing import List, Optional, Dict
 from pydantic import BaseModel
@@ -51,8 +50,7 @@ lastfm_recommendation_service = LastFMRecommendationService()
 async def get_collection_size(token: str = Query(..., description="Spotify access token")):
     """Get user's collection size for optimization warnings"""
     try:
-        print(f"=== COLLECTION SIZE ENDPOINT ===")
-        print(f"Token provided: {'Yes' if token else 'No'}")
+        print(f"Collection size endpoint called")
         
         if not token or len(token) < 10:
             raise HTTPException(status_code=400, detail="Invalid or missing access token")
@@ -123,10 +121,7 @@ async def get_search_based_recommendations(
     Get BPM-based auto discovery recommendations
     """
     try:
-        print(f"=== LAST.FM AUTO DISCOVERY ENDPOINT ===")
-        print(f"Token provided: {'Yes' if token else 'No'}")
-        print(f"Token length: {len(token) if token else 0}")
-        print(f"Generation seed: {generation_seed}")
+        print(f"Auto discovery endpoint called with generation seed: {generation_seed}")
         
         # Progress tracking
         progress_messages = []
@@ -275,8 +270,8 @@ async def get_search_based_recommendations(
                 # Use selected tracks instead of all tracks
                 user_tracks = selected_tracks[:analysis_track_count]
                 
-                print(f"🎯 SEED SELECTION: Using {len(user_tracks)} tracks from generation seed {generation_seed}")
-                print(f"🎯 SEED SELECTION: Library offset: {library_offset}, Artist offset: {artist_offset}")
+                print(f"SEED SELECTION: Using {len(user_tracks)} tracks from generation seed {generation_seed}")
+                print(f"SEED SELECTION: Library offset: {library_offset}, Artist offset: {artist_offset}")
             
             add_progress("Calling Last.fm recommendation API with your music...")
             
@@ -303,11 +298,11 @@ async def get_search_based_recommendations(
         # Get the recommendations from result
         recommendations = result.get('recommendations', [])
         print(f"Successfully generated {len(recommendations)} recommendations")
-        print(f"🎯 BACKEND SUMMARY: Found {len(recommendations)} songs after all recommendation calls")
+        print(f"BACKEND SUMMARY: Found {len(recommendations)} songs after all recommendation calls")
         
         # Store extra recommendations for future batches
         extra_recommendations = []
-        print(f"🎯 BACKEND DEBUG: Total recommendations: {len(recommendations)}, Requested: {n_recommendations}")
+        print(f"BACKEND DEBUG: Total recommendations: {len(recommendations)}, Requested: {n_recommendations}")
         if len(recommendations) > n_recommendations:
             extra_recommendations = recommendations[n_recommendations:]
             
@@ -316,11 +311,10 @@ async def get_search_based_recommendations(
             random.seed(generation_seed + 42)  # Different seed for pool randomization
             random.shuffle(extra_recommendations)
             
-            print(f"🎯 BACKEND POOL: Adding {len(extra_recommendations)} randomized songs to recommendation pool")
-            print(f"💾 Caching {len(extra_recommendations)} extra recommendations for instant batches")
+            print(f"BACKEND POOL: Adding {len(extra_recommendations)} randomized songs to recommendation pool")
             add_progress(f"Caching {len(extra_recommendations)} extra recommendations for instant batches...")
         else:
-            print(f"🎯 BACKEND POOL: No extra recommendations to cache (only {len(recommendations)} total, requested {n_recommendations})")
+            print(f"BACKEND POOL: No extra recommendations to cache (only {len(recommendations)} total, requested {n_recommendations})")
         
         add_progress("Complete! Recommendations ready for delivery...")
         
@@ -472,13 +466,14 @@ async def get_search_based_recommendations_stream(
                             # Use selected tracks instead of all tracks
                             user_tracks = selected_tracks[:analysis_track_count]
                             
-                            print(f"🎯 SEED SELECTION: Using {len(user_tracks)} tracks from generation seed {generation_seed}")
-                            print(f"🎯 SEED SELECTION: Library offset: {library_offset}, Artist offset: {artist_offset}")
+                            progress_callback(f"Selected {len(user_tracks)} diverse tracks from your library")
+                            print(f"SEED SELECTION: Using {len(user_tracks)} tracks from generation seed {generation_seed}")
+                            print(f"SEED SELECTION: Library offset: {library_offset}, Artist offset: {artist_offset}")
                         
                         progress_callback("Calling Last.fm recommendation API with your music...")
                         
                         # Log the request details for debugging
-                        print(f"🔍 BACKEND REQUEST: Calling Last.fm service with n_recommendations={n_recommendations}")
+                        print(f"BACKEND REQUEST: Calling Last.fm service with n_recommendations={n_recommendations}")
                         
                         # Use Last.fm recommendation method with progress callback
                         result = lastfm_recommendation_service.get_auto_discovery_recommendations(
@@ -492,7 +487,7 @@ async def get_search_based_recommendations_stream(
                             progress_callback=progress_callback
                         )
                         
-                        progress_callback("Sorting and filtering recommendations...")
+                        progress_callback("Analyzing and filtering recommendations...")
                         
                         # Add pool logic and final progress message
                         recommendations = result.get('recommendations', [])
@@ -712,9 +707,7 @@ async def get_manual_recommendations_stream(
     Get Last.fm-based recommendations for manually selected seed tracks with streaming progress
     """
     try:
-        print(f"=== STREAMING MANUAL DISCOVERY REQUEST RECEIVED ===")
-        print(f"Seed tracks: {len(request.seed_tracks)}")
-        print(f"Requested recommendations: {request.n_recommendations}")
+        print(f"Streaming manual discovery request received with {len(request.seed_tracks)} seed tracks")
         
         if not request.token or len(request.token) < 10:
             raise HTTPException(status_code=400, detail="Invalid or missing access token")
@@ -815,6 +808,10 @@ async def get_manual_recommendations_stream(
         def generate_recommendations():
             """Generate recommendations in a separate thread"""
             try:
+                # Send initial progress messages
+                progress_callback("Processing your selected seed tracks...")
+                progress_callback("Calling Last.fm recommendation API...")
+                
                 # Use Last.fm recommendation service with progress callback
                 result = lastfm_recommendation_service.get_multiple_seed_recommendations(
                     seed_tracks=seed_tracks_info,
@@ -826,6 +823,17 @@ async def get_manual_recommendations_stream(
                     depth=request.depth,
                     progress_callback=progress_callback
                 )
+                
+                # Send final progress messages
+                progress_callback("Analyzing and filtering recommendations...")
+                recommendations = result.get('recommendations', [])
+                if len(recommendations) > request.n_recommendations:
+                    extra_recommendations = recommendations[request.n_recommendations:]
+                    progress_callback(f"Caching {len(extra_recommendations)} extra recommendations for instant batches...")
+                else:
+                    progress_callback("No extra recommendations to cache for pool")
+                
+                progress_callback("Complete! Recommendations ready for delivery...")
                 
                 # Send final result
                 progress_queue.put({

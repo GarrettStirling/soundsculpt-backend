@@ -1,6 +1,5 @@
 from fastapi import APIRouter, HTTPException, Header, Query
 from app.services.spotify_service import SpotifyService
-from app.services.deezer_service import DeezerService
 from typing import Optional, Dict, List
 from pydantic import BaseModel
 import spotipy
@@ -9,7 +8,6 @@ router = APIRouter(prefix="/spotify", tags=["Spotify Data"])
 
 # Initialize services
 spotify_service = SpotifyService()
-deezer_service = DeezerService()
 
 class UpdatePlaylistRequest(BaseModel):
     track_uris: List[str]

@@ -38,13 +38,13 @@ app.include_router(youtube.router)
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start_time = time.time()
-    print(f"🌐 REQUEST: {request.method} {request.url}")
-    print(f"🌐 Headers: {dict(request.headers)}")
+    print(f"REQUEST: {request.method} {request.url}")
+    print(f"Headers: {dict(request.headers)}")
     if request.query_params:
-        print(f"🌐 Query Params: {dict(request.query_params)}")
+        print(f"Query Params: {dict(request.query_params)}")
     response = await call_next(request)
     process_time = time.time() - start_time
-    print(f"🌐 RESPONSE: {response.status_code} ({process_time:.2f}s)")
+    print(f"RESPONSE: {response.status_code} ({process_time:.2f}s)")
     return response
 
 @app.get("/")

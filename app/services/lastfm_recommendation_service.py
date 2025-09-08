@@ -144,16 +144,13 @@ class LastFMRecommendationService:
             # Clear previous progress messages
             self.progress_messages = []
             
-            self.add_progress_message("Starting")
+            self.add_progress_message("Starting Last.fm recommendation engine...")
             if progress_callback:
-                progress_callback("Starting")
+                progress_callback("Starting Last.fm recommendation engine...")
+            
+            self.add_progress_message("Analyzing your selected seed tracks...")
             if progress_callback:
-                progress_callback("Starting")
-            self.add_progress_message("Analyzing")
-            if progress_callback:
-                progress_callback("Analyzing")
-            if progress_callback:
-                progress_callback("Analyzing")
+                progress_callback("Analyzing your selected seed tracks...")
             
             # Check if Last.fm service is available
             if not self.lastfm_service.api_key:
@@ -168,11 +165,9 @@ class LastFMRecommendationService:
             for seed_track in seed_tracks:
                 seen_artists.add(seed_track['artist'].lower())
             
-            self.add_progress_message("Filtering")
+            self.add_progress_message("Setting up recommendation filters...")
             if progress_callback:
-                progress_callback("Filtering")
-            if progress_callback:
-                progress_callback("Filtering")
+                progress_callback("Setting up recommendation filters...")
             
             # Create a combined exclusion set for easier filtering
             excluded_ids = excluded_track_ids or set()
@@ -180,9 +175,9 @@ class LastFMRecommendationService:
             
             # Process each seed track
             for i, seed_track in enumerate(seed_tracks):
-                self.add_progress_message("Searching")
+                self.add_progress_message(f"Finding music similar to '{seed_track['name']}' by {seed_track['artist']}...")
                 if progress_callback:
-                    progress_callback("Searching")
+                    progress_callback(f"Finding music similar to '{seed_track['name']}' by {seed_track['artist']}...")
                 
                 # Get similar tracks for this seed
                 similar_tracks = self.lastfm_service.get_similar_tracks(seed_track['artist'], seed_track['name'], limit=50)
@@ -260,9 +255,9 @@ class LastFMRecommendationService:
             all_recommendations = all_recommendations[:n_recommendations]
             
             elapsed_time = time.time() - start_time
-            self.add_progress_message("Complete")
+            self.add_progress_message(f"Found {len(all_recommendations)} perfect recommendations for you!")
             if progress_callback:
-                progress_callback("Complete")
+                progress_callback(f"Found {len(all_recommendations)} perfect recommendations for you!")
             
             return {
                 'recommendations': all_recommendations,
@@ -293,12 +288,13 @@ class LastFMRecommendationService:
             # Clear previous progress messages
             self.progress_messages = []
             
-            self.add_progress_message("Starting")
+            self.add_progress_message("Starting Last.fm recommendation engine...")
             if progress_callback:
-                progress_callback("Starting")
-            self.add_progress_message("Analyzing")
+                progress_callback("Starting Last.fm recommendation engine...")
+            
+            self.add_progress_message("Analyzing your music taste patterns...")
             if progress_callback:
-                progress_callback("Analyzing")
+                progress_callback("Analyzing your music taste patterns...")
             
             # Determine popularity group preference
             if popularity <= 33:
@@ -307,9 +303,10 @@ class LastFMRecommendationService:
                 preference_group = "balanced"
             else:
                 preference_group = "popular/mainstream"
-            self.add_progress_message("Filtering")
+            
+            self.add_progress_message(f"Setting preference to {preference_group} music...")
             if progress_callback:
-                progress_callback("Filtering")
+                progress_callback(f"Setting preference to {preference_group} music...")
             
             
             # Check if Last.fm service is available
@@ -317,9 +314,9 @@ class LastFMRecommendationService:
                 return {"error": "Last.fm API not configured. Please set LASTFM_API_KEY and LASTFM_SHARED_SECRET environment variables."}
             
             # Step 1: Get similar tracks directly from Last.fm
-            self.add_progress_message("Searching")
+            self.add_progress_message("Finding similar tracks from Last.fm...")
             if progress_callback:
-                progress_callback("Searching")
+                progress_callback("Finding similar tracks from Last.fm...")
             similar_tracks = self.lastfm_service.get_similar_tracks(seed_artist_name, seed_track_name, limit=50)
             
             if not similar_tracks:
@@ -327,9 +324,9 @@ class LastFMRecommendationService:
                 return self._get_artist_based_recommendations(seed_artist_name, n_recommendations, excluded_track_ids)
             
             # Step 2: Get similar artists as backup
-            self.add_progress_message("Searching")
+            self.add_progress_message("Finding similar artists as backup...")
             if progress_callback:
-                progress_callback("Searching")
+                progress_callback("Finding similar artists as backup...")
             similar_artists = self.lastfm_service.get_similar_artists(seed_artist_name, limit=15)
             
             # Step 3: Collect recommendations from both sources
@@ -574,9 +571,9 @@ class LastFMRecommendationService:
             all_recommendations = all_recommendations[:n_recommendations]
             
             elapsed_time = time.time() - start_time
-            self.add_progress_message("Complete")
+            self.add_progress_message(f"Found {len(all_recommendations)} perfect recommendations for you!")
             if progress_callback:
-                progress_callback("Complete")
+                progress_callback(f"Found {len(all_recommendations)} perfect recommendations for you!")
             
             return {
                 'recommendations': all_recommendations,
@@ -674,12 +671,9 @@ class LastFMRecommendationService:
             # Clear previous progress messages
             self.progress_messages = []
             
-            self.add_progress_message("Starting")
+            self.add_progress_message("🚀 Starting Last.fm recommendation engine...")
             if progress_callback:
-                progress_callback("Starting")
-            self.add_progress_message("Analyzing")
-            if progress_callback:
-                progress_callback("Analyzing")
+                progress_callback("🚀 Starting Last.fm recommendation engine...")
             
             # Determine popularity group preference
             if popularity <= 33:
@@ -688,17 +682,18 @@ class LastFMRecommendationService:
                 preference_group = "balanced"
             else:
                 preference_group = "popular/mainstream"
-            self.add_progress_message("Filtering")
+            
+            self.add_progress_message(f"🎯 Setting preference to {preference_group} music...")
             if progress_callback:
-                progress_callback("Filtering")
+                progress_callback(f"🎯 Setting preference to {preference_group} music...")
             
             # Check if Last.fm service is available
             if not self.lastfm_service.api_key:
                 return {"error": "Last.fm API not configured. Please set LASTFM_API_KEY and LASTFM_SHARED_SECRET environment variables."}
             
-            self.add_progress_message("Analyzing")
+            self.add_progress_message("📊 Analyzing your music taste patterns...")
             if progress_callback:
-                progress_callback("Analyzing")
+                progress_callback("📊 Analyzing your music taste patterns...")
             # Analyze user's most played artists - use ALL tracks provided
             artist_counts = {}
             for track in user_tracks:  # Analyze ALL tracks provided
@@ -712,9 +707,9 @@ class LastFMRecommendationService:
             # Get top artists based on depth slider
             top_artists = sorted(artist_counts.items(), key=lambda x: x[1], reverse=True)[:depth]
             
-            self.add_progress_message("Searching")
+            self.add_progress_message(f"🔍 Finding similar artists to your top {len(top_artists)} favorites...")
             if progress_callback:
-                progress_callback("Searching")
+                progress_callback(f"🔍 Finding similar artists to your top {len(top_artists)} favorites...")
             # Get recommendations based on top artists
             all_recommendations = []
             seen_artists = set(artist_counts.keys())  # Exclude user's current artists
@@ -733,9 +728,15 @@ class LastFMRecommendationService:
             # Create a combined exclusion set for easier filtering
             all_excluded_tracks = excluded_ids.union(user_track_ids)
             
-            for artist_name, count in top_artists:
+            for i, (artist_name, count) in enumerate(top_artists):
                 if len(all_recommendations) >= n_recommendations:
                     break
+                
+                # Send progress update for each artist being processed
+                if i % 3 == 0:  # Update every 3rd artist to avoid spam
+                    self.add_progress_message(f"Discovering music similar to {artist_name}...")
+                    if progress_callback:
+                        progress_callback(f"Discovering music similar to {artist_name}...")
                 
                 # Get similar artists
                 similar_artists = self.lastfm_service.get_similar_artists(artist_name, limit=10)
@@ -821,11 +822,11 @@ class LastFMRecommendationService:
             all_recommendations = all_recommendations[:n_recommendations]
             
             # Log final count without showing individual track IDs
-            print(f"🎯 BACKEND SUMMARY: Found {len(all_recommendations)} songs after all recommendation calls")
+            print(f"BACKEND SUMMARY: Found {len(all_recommendations)} songs after all recommendation calls")
             
-            self.add_progress_message("Complete")
+            self.add_progress_message(f"Found {len(all_recommendations)} perfect recommendations for you!")
             if progress_callback:
-                progress_callback("Complete")
+                progress_callback(f"Found {len(all_recommendations)} perfect recommendations for you!")
             
             return {
                 'recommendations': all_recommendations,
