@@ -8,10 +8,8 @@ import os
 import json
 import asyncio
 import time
-from app.services.discovery_recommendation_service import DiscoveryRecommendationService
 from app.services.spotify_service import SpotifyService
 from app.services.recommendation_utils import RecommendationUtils
-from app.services.bpm_recommendation_service import BPMRecommendationService
 from typing import List, Optional, Dict
 from pydantic import BaseModel
 
@@ -41,9 +39,7 @@ class PlaylistCreationResponse(BaseModel):
 
 
 # Initialize services
-discovery_recommendation_service = DiscoveryRecommendationService()
 spotify_service = SpotifyService()
-bpm_recommendation_service = BPMRecommendationService()
 
 @router.get("/collection-size")
 async def get_collection_size(token: str = Query(..., description="Spotify access token")):
@@ -97,17 +93,22 @@ async def get_search_based_recommendations(
     popularity: Optional[int] = Query(None, ge=0, le=100, description="Popularity preference (0=niche, 100=mainstream)"),
     analysis_track_count: int = Query(1000, ge=50, le=5000, description="Number of recent tracks to analyze"),
     generation_seed: int = Query(0, ge=0, description="Generation seed for variation (0=first generation, 1+=subsequent)"),
-    exclude_track_ids: Optional[str] = Query(None, description="Comma-separated list of track IDs to exclude from recommendations")
+    exclude_track_ids: Optional[str] = Query(None, description="Comma-separated list of track IDs to exclude from recommendations"),
+    exclude_saved_tracks: bool = Query(False, description="Whether to exclude user's saved tracks from analysis")
 ):
     """
     Get music discovery recommendations focused on new artists and underground tracks
     """
     try:
+        import time
+        start_time = time.time()
         print(f"=== MUSIC DISCOVERY ENDPOINT ===")
         print(f"Token provided: {'Yes' if token else 'No'}")
         print(f"Token length: {len(token) if token else 0}")
         print(f"Token starts with: {token[:10] if token else 'None'}...")
         print(f"Generation seed: {generation_seed}")
+        print(f"Analysis track count: {analysis_track_count}")
+        print(f"Exclude saved tracks: {exclude_saved_tracks}")
         
         # Parse excluded track IDs
         excluded_ids = set()
@@ -124,49 +125,191 @@ async def get_search_based_recommendations(
             print(f"User preferences: {user_preferences}")
         
         print(f"Requesting {n_recommendations} recommendations (gen #{generation_seed + 1})")
+        print(f"Exclude saved tracks: {exclude_saved_tracks}")
 
         if not token or len(token) < 10:
             raise HTTPException(status_code=400, detail="Invalid or missing access token")
 
-        # Use BPM-based auto discovery
+        # Create Spotify client
         sp = spotify_service.create_spotify_client(token)
         
-        # Get user's recent tracks for BPM analysis
+        # Get user's recent tracks for analysis
+        user_tracks = []
         try:
-            user_tracks = []
-            # Get recently played tracks
-            recent_tracks = sp.current_user_recently_played(limit=50)
+            # Profile: Track fetching
+            fetch_start = time.time()
+            print(f"Fetching up to {analysis_track_count} recent tracks...")
+            
+            # Get recently played tracks (make multiple calls if needed)
+            recent_start = time.time()
+            recent_tracks = sp.current_user_recently_played(limit=50)  # Max per call
+            recent_time = time.time() - recent_start
+            print(f"⏱️ Recent tracks API call: {recent_time:.2f}s")
+            
             for item in recent_tracks.get('items', []):
                 if item.get('track'):
                     user_tracks.append(item['track'])
             
-            # Get user's saved tracks if we need more data
-            if len(user_tracks) < 20:
-                saved_tracks = sp.current_user_saved_tracks(limit=50)
+            print(f"Got {len(user_tracks)} recent tracks")
+            
+            # Only get saved tracks if exclude_saved_tracks is False AND we need more data
+            if not exclude_saved_tracks and len(user_tracks) < min(20, analysis_track_count):
+                print("Fetching saved tracks for additional analysis...")
+                saved_start = time.time()
+                saved_tracks = sp.current_user_saved_tracks(limit=50)  # Max per call
+                saved_time = time.time() - saved_start
+                print(f"⏱️ Saved tracks API call: {saved_time:.2f}s")
+                
                 for item in saved_tracks.get('items', []):
                     if item.get('track'):
                         user_tracks.append(item['track'])
+                print(f"Total tracks for analysis: {len(user_tracks)}")
+            elif exclude_saved_tracks:
+                print("Skipping saved tracks as requested by user")
             
-            print(f"Analyzing {len(user_tracks)} user tracks for BPM-based recommendations")
-            
-            # Use BPM-based auto discovery
-            result = bpm_recommendation_service.get_auto_discovery_recommendations(
-                user_tracks=user_tracks,
-                n_recommendations=n_recommendations,
-                excluded_track_ids=excluded_ids
-            )
+            fetch_time = time.time() - fetch_start
+            print(f"⏱️ Total track fetching time: {fetch_time:.2f}s")
             
         except Exception as e:
-            print(f"Error getting user tracks for BPM analysis: {e}")
-            # Fallback to original discovery service
-            result = discovery_recommendation_service.get_recommendations(
-                access_token=token,
-                n_recommendations=n_recommendations,
-                user_preferences=user_preferences if user_preferences else None,
-                generation_seed=generation_seed,
-                excluded_track_ids=excluded_ids,
-                analysis_track_count=analysis_track_count
-            )
+            print(f"Error getting user tracks: {e}")
+            # Continue with empty user_tracks for fallback recommendations
+        
+        # Generate recommendations using Spotify's recommendation API
+        # Use multiple seed combinations to leverage more of the user's data
+        try:
+            # Profile: Data processing
+            process_start = time.time()
+            
+            # Collect all unique artists from user tracks
+            artist_start = time.time()
+            all_artists = []
+            seen_artists = set()
+            for track in user_tracks:
+                for artist in track.get('artists', []):
+                    if artist.get('id') and artist['id'] not in seen_artists:
+                        all_artists.append(artist['id'])
+                        seen_artists.add(artist['id'])
+            
+            # Collect all track IDs
+            all_track_ids = [track['id'] for track in user_tracks if track.get('id')]
+            
+            artist_time = time.time() - artist_start
+            print(f"⏱️ Artist/track processing: {artist_time:.2f}s")
+            print(f"User has {len(all_track_ids)} tracks and {len(all_artists)} unique artists")
+            
+            # Make multiple API calls with different seed combinations
+            all_recommendations = []
+            recommendations_per_call = min(20, n_recommendations // 3)  # Split into 3 calls
+            
+            # Call 1: Use first 5 tracks + first 5 artists
+            if all_track_ids and all_artists:
+                print("Making recommendation call 1: First 5 tracks + first 5 artists")
+                call1_start = time.time()
+                rec1 = sp.recommendations(
+                    seed_tracks=all_track_ids[:5],
+                    seed_artists=all_artists[:5],
+                    limit=recommendations_per_call,
+                    **user_preferences
+                )
+                call1_time = time.time() - call1_start
+                print(f"⏱️ Recommendation call 1: {call1_time:.2f}s")
+                all_recommendations.extend(rec1.get('tracks', []))
+            
+            # Call 2: Use middle 5 tracks + middle 5 artists (if we have enough data)
+            if len(all_track_ids) >= 10 and len(all_artists) >= 10:
+                print("Making recommendation call 2: Middle tracks + middle artists")
+                call2_start = time.time()
+                mid_track_start = len(all_track_ids) // 2
+                mid_artist_start = len(all_artists) // 2
+                rec2 = sp.recommendations(
+                    seed_tracks=all_track_ids[mid_track_start:mid_track_start+5],
+                    seed_artists=all_artists[mid_artist_start:mid_artist_start+5],
+                    limit=recommendations_per_call,
+                    **user_preferences
+                )
+                call2_time = time.time() - call2_start
+                print(f"⏱️ Recommendation call 2: {call2_time:.2f}s")
+                all_recommendations.extend(rec2.get('tracks', []))
+            
+            # Call 3: Use last 5 tracks + last 5 artists (if we have enough data)
+            if len(all_track_ids) >= 15 and len(all_artists) >= 15:
+                print("Making recommendation call 3: Last tracks + last artists")
+                call3_start = time.time()
+                rec3 = sp.recommendations(
+                    seed_tracks=all_track_ids[-5:],
+                    seed_artists=all_artists[-5:],
+                    limit=recommendations_per_call,
+                    **user_preferences
+                )
+                call3_time = time.time() - call3_start
+                print(f"⏱️ Recommendation call 3: {call3_time:.2f}s")
+                all_recommendations.extend(rec3.get('tracks', []))
+            
+            # If we still need more recommendations, make additional calls with random samples
+            if len(all_recommendations) < n_recommendations and len(all_track_ids) >= 20:
+                remaining_needed = n_recommendations - len(all_recommendations)
+                print(f"Making additional calls for {remaining_needed} more recommendations")
+                
+                # Sample random tracks and artists for variety
+                import random
+                random_start = time.time()
+                random_tracks = random.sample(all_track_ids, min(5, len(all_track_ids)))
+                random_artists = random.sample(all_artists, min(5, len(all_artists)))
+                
+                rec4 = sp.recommendations(
+                    seed_tracks=random_tracks,
+                    seed_artists=random_artists,
+                    limit=remaining_needed,
+                    **user_preferences
+                )
+                random_time = time.time() - random_start
+                print(f"⏱️ Random sampling call: {random_time:.2f}s")
+                all_recommendations.extend(rec4.get('tracks', []))
+            
+            print(f"Generated {len(all_recommendations)} total recommendations from {len(user_tracks)} user tracks")
+            
+            # Format recommendations and remove duplicates
+            format_start = time.time()
+            formatted_recommendations = []
+            seen_track_ids = set()
+            for track in all_recommendations:
+                if track['id'] not in excluded_ids and track['id'] not in seen_track_ids:
+                    formatted_recommendations.append(RecommendationUtils.format_track_recommendation(track, "Auto Discovery"))
+                    seen_track_ids.add(track['id'])
+            
+            # Randomly shuffle for better mix
+            import random
+            random.shuffle(formatted_recommendations)
+            
+            # Limit to requested number
+            formatted_recommendations = formatted_recommendations[:n_recommendations]
+            
+            format_time = time.time() - format_start
+            print(f"⏱️ Formatting and shuffling: {format_time:.2f}s")
+            
+            # Calculate total time
+            total_time = time.time() - start_time
+            print(f"⏱️ Total endpoint time: {total_time:.2f}s")
+            
+            # Store extra recommendations for future batches
+            extra_recommendations = []
+            if len(formatted_recommendations) > n_recommendations:
+                extra_recommendations = formatted_recommendations[n_recommendations:]
+                print(f"Storing {len(extra_recommendations)} extra recommendations for future batches")
+            
+            result = {
+                "recommendations": formatted_recommendations[:n_recommendations],
+                "extra_recommendations": extra_recommendations,  # For smart batching
+                "generation_seed": generation_seed,
+                "analysis_track_count": len(user_tracks),
+                "excluded_saved_tracks": exclude_saved_tracks,
+                "total_generated": len(all_recommendations),
+                "processing_time": total_time
+            }
+            
+        except Exception as e:
+            print(f"Error generating recommendations: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to generate recommendations: {str(e)}")
 
         if "error" in result:
             print(f"Error from recommendation service: {result['error']}")
