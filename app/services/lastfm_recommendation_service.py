@@ -820,6 +820,9 @@ class LastFMRecommendationService:
             # Limit to requested number of recommendations
             all_recommendations = all_recommendations[:n_recommendations]
             
+            # Log final count without showing individual track IDs
+            print(f"🎯 BACKEND SUMMARY: Found {len(all_recommendations)} songs after all recommendation calls")
+            
             self.add_progress_message("Complete")
             if progress_callback:
                 progress_callback("Complete")

@@ -107,15 +107,6 @@ async def get_collection_size(token: str = Query(..., description="Spotify acces
         print(f"Collection size error: {e}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-@router.get("/test-debug")
-async def test_debug():
-    """Simple test endpoint to verify backend is running updated code"""
-    print("🧪 TEST DEBUG ENDPOINT CALLED - BACKEND IS RUNNING UPDATED CODE")
-    return {
-        "message": "Backend is running updated code!",
-        "timestamp": "2024-01-01T00:00:00Z",
-        "debug": "This proves the backend is using the updated Last.fm file"
-    }
 
 @router.get("/search-based-discovery")
 async def get_search_based_recommendations(
@@ -485,6 +476,9 @@ async def get_search_based_recommendations_stream(
                             print(f"🎯 SEED SELECTION: Library offset: {library_offset}, Artist offset: {artist_offset}")
                         
                         progress_callback("Calling Last.fm recommendation API with your music...")
+                        
+                        # Log the request details for debugging
+                        print(f"🔍 BACKEND REQUEST: Calling Last.fm service with n_recommendations={n_recommendations}")
                         
                         # Use Last.fm recommendation method with progress callback
                         result = lastfm_recommendation_service.get_auto_discovery_recommendations(
