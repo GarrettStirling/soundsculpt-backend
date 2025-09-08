@@ -238,6 +238,7 @@ class LastFMRecommendationService:
                     
                     # Add to recommendations
                     recommendation = {
+                        'id': track_id,
                         'name': track_name,
                         'artist': artist_name,
                         'album_cover': spotify_data['album_cover'],
