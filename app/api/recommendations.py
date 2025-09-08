@@ -13,7 +13,7 @@ from app.services.recommendation_utils import RecommendationUtils
 from typing import List, Optional, Dict
 from pydantic import BaseModel
 
-router = APIRouter(prefix="/recommendations", tags=["Music Recommendations"])
+# router = APIRouter(prefix="/recommendations", tags=["Music Recommendations"])  # DISABLED - Using Last.fm
 
 # Pydantic models for request/response
 class ManualRecommendationRequest(BaseModel):
@@ -102,13 +102,21 @@ async def get_search_based_recommendations(
     try:
         import time
         start_time = time.time()
-        print(f"=== MUSIC DISCOVERY ENDPOINT ===")
+        print(f"=== MUSIC DISCOVERY ENDPOINT (NEW VERSION) ===")
+        print(f"🎯 USING UPDATED RECOMMENDATIONS.PY FILE")
         print(f"Token provided: {'Yes' if token else 'No'}")
         print(f"Token length: {len(token) if token else 0}")
         print(f"Token starts with: {token[:10] if token else 'None'}...")
         print(f"Generation seed: {generation_seed}")
         print(f"Analysis track count: {analysis_track_count}")
         print(f"Exclude saved tracks: {exclude_saved_tracks}")
+        
+        # Progress tracking
+        progress_messages = []
+        
+        def add_progress(message):
+            progress_messages.append(message)
+            print(f"📡 PROGRESS: {message}")
         
         # Parse excluded track IDs
         excluded_ids = set()
@@ -138,7 +146,8 @@ async def get_search_based_recommendations(
         try:
             # Profile: Track fetching
             fetch_start = time.time()
-            print(f"Fetching up to {analysis_track_count} recent tracks...")
+            print(f"🔍 Step 1: Analyzing your music taste & fetching up to {analysis_track_count} recent tracks...")
+            add_progress("Fetching your recent tracks from Spotify...")
             
             # Get recently played tracks (make multiple calls if needed)
             recent_start = time.time()
@@ -154,7 +163,7 @@ async def get_search_based_recommendations(
             
             # Only get saved tracks if exclude_saved_tracks is False AND we need more data
             if not exclude_saved_tracks and len(user_tracks) < min(20, analysis_track_count):
-                print("Fetching saved tracks for additional analysis...")
+                print("🔍 Step 1b: Fetching saved tracks for deeper analysis...")
                 saved_start = time.time()
                 saved_tracks = sp.current_user_saved_tracks(limit=50)  # Max per call
                 saved_time = time.time() - saved_start
@@ -163,9 +172,9 @@ async def get_search_based_recommendations(
                 for item in saved_tracks.get('items', []):
                     if item.get('track'):
                         user_tracks.append(item['track'])
-                print(f"Total tracks for analysis: {len(user_tracks)}")
+                print(f"📊 Total tracks for analysis: {len(user_tracks)}")
             elif exclude_saved_tracks:
-                print("Skipping saved tracks as requested by user")
+                print("⏭️ Skipping saved tracks as requested by user")
             
             fetch_time = time.time() - fetch_start
             print(f"⏱️ Total track fetching time: {fetch_time:.2f}s")
@@ -179,6 +188,8 @@ async def get_search_based_recommendations(
         try:
             # Profile: Data processing
             process_start = time.time()
+            print(f"🎵 Step 2: Processing your music library & extracting artists...")
+            add_progress("Processing your music library and extracting artists...")
             
             # Collect all unique artists from user tracks
             artist_start = time.time()
@@ -195,19 +206,33 @@ async def get_search_based_recommendations(
             
             artist_time = time.time() - artist_start
             print(f"⏱️ Artist/track processing: {artist_time:.2f}s")
-            print(f"User has {len(all_track_ids)} tracks and {len(all_artists)} unique artists")
+            print(f"📊 User has {len(all_track_ids)} tracks and {len(all_artists)} unique artists")
             
             # Make multiple API calls with different seed combinations
             all_recommendations = []
             recommendations_per_call = min(20, n_recommendations // 3)  # Split into 3 calls
+            print(f"🎯 Step 3: Generating recommendations from beginning, middle & end of your library...")
+            add_progress("Calling Spotify recommendation API with your music...")
             
-            # Call 1: Use first 5 tracks + first 5 artists
+            # Use generation seed to select different parts of the library for variety
+            import random
+            random.seed(generation_seed)  # Use generation seed for reproducible variety
+            
+            # Calculate offset based on generation seed to explore different parts of library
+            library_offset = (generation_seed * 10) % max(1, len(all_track_ids) - 20)
+            artist_offset = (generation_seed * 7) % max(1, len(all_artists) - 20)
+            
+            print(f"🎲 Using generation seed {generation_seed} - exploring library from offset {library_offset} (tracks) and {artist_offset} (artists)")
+            
+            # Call 1: Use offset tracks + artists
             if all_track_ids and all_artists:
-                print("Making recommendation call 1: First 5 tracks + first 5 artists")
+                start_track = min(library_offset, len(all_track_ids) - 5)
+                start_artist = min(artist_offset, len(all_artists) - 5)
+                print(f"🎵 Call 1: Using library section starting at track {start_track} and artist {start_artist}")
                 call1_start = time.time()
                 rec1 = sp.recommendations(
-                    seed_tracks=all_track_ids[:5],
-                    seed_artists=all_artists[:5],
+                    seed_tracks=all_track_ids[start_track:start_track+5],
+                    seed_artists=all_artists[start_artist:start_artist+5],
                     limit=recommendations_per_call,
                     **user_preferences
                 )
@@ -215,12 +240,12 @@ async def get_search_based_recommendations(
                 print(f"⏱️ Recommendation call 1: {call1_time:.2f}s")
                 all_recommendations.extend(rec1.get('tracks', []))
             
-            # Call 2: Use middle 5 tracks + middle 5 artists (if we have enough data)
+            # Call 2: Use different offset section (if we have enough data)
             if len(all_track_ids) >= 10 and len(all_artists) >= 10:
-                print("Making recommendation call 2: Middle tracks + middle artists")
+                mid_track_start = (library_offset + 15) % max(1, len(all_track_ids) - 5)
+                mid_artist_start = (artist_offset + 10) % max(1, len(all_artists) - 5)
+                print(f"🎵 Call 2: Using library section starting at track {mid_track_start} and artist {mid_artist_start}")
                 call2_start = time.time()
-                mid_track_start = len(all_track_ids) // 2
-                mid_artist_start = len(all_artists) // 2
                 rec2 = sp.recommendations(
                     seed_tracks=all_track_ids[mid_track_start:mid_track_start+5],
                     seed_artists=all_artists[mid_artist_start:mid_artist_start+5],
@@ -231,13 +256,15 @@ async def get_search_based_recommendations(
                 print(f"⏱️ Recommendation call 2: {call2_time:.2f}s")
                 all_recommendations.extend(rec2.get('tracks', []))
             
-            # Call 3: Use last 5 tracks + last 5 artists (if we have enough data)
+            # Call 3: Use another different offset section (if we have enough data)
             if len(all_track_ids) >= 15 and len(all_artists) >= 15:
-                print("Making recommendation call 3: Last tracks + last artists")
+                end_track_start = (library_offset + 30) % max(1, len(all_track_ids) - 5)
+                end_artist_start = (artist_offset + 20) % max(1, len(all_artists) - 5)
+                print(f"🎵 Call 3: Using library section starting at track {end_track_start} and artist {end_artist_start}")
                 call3_start = time.time()
                 rec3 = sp.recommendations(
-                    seed_tracks=all_track_ids[-5:],
-                    seed_artists=all_artists[-5:],
+                    seed_tracks=all_track_ids[end_track_start:end_track_start+5],
+                    seed_artists=all_artists[end_artist_start:end_artist_start+5],
                     limit=recommendations_per_call,
                     **user_preferences
                 )
@@ -245,16 +272,20 @@ async def get_search_based_recommendations(
                 print(f"⏱️ Recommendation call 3: {call3_time:.2f}s")
                 all_recommendations.extend(rec3.get('tracks', []))
             
-            # If we still need more recommendations, make additional calls with random samples
+            # If we still need more recommendations, make additional calls with different offset
             if len(all_recommendations) < n_recommendations and len(all_track_ids) >= 20:
                 remaining_needed = n_recommendations - len(all_recommendations)
-                print(f"Making additional calls for {remaining_needed} more recommendations")
+                print(f"🎲 Making additional calls for {remaining_needed} more recommendations using different library section")
                 
-                # Sample random tracks and artists for variety
-                import random
+                # Use another offset section for variety
                 random_start = time.time()
-                random_tracks = random.sample(all_track_ids, min(5, len(all_track_ids)))
-                random_artists = random.sample(all_artists, min(5, len(all_artists)))
+                random_track_start = (library_offset + 50) % max(1, len(all_track_ids) - 5)
+                random_artist_start = (artist_offset + 35) % max(1, len(all_artists) - 5)
+                
+                random_tracks = all_track_ids[random_track_start:random_track_start+5]
+                random_artists = all_artists[random_artist_start:random_artist_start+5]
+                
+                print(f"🎵 Additional call: Using library section starting at track {random_track_start} and artist {random_artist_start}")
                 
                 rec4 = sp.recommendations(
                     seed_tracks=random_tracks,
@@ -263,13 +294,16 @@ async def get_search_based_recommendations(
                     **user_preferences
                 )
                 random_time = time.time() - random_start
-                print(f"⏱️ Random sampling call: {random_time:.2f}s")
+                print(f"⏱️ Additional sampling call: {random_time:.2f}s")
                 all_recommendations.extend(rec4.get('tracks', []))
             
-            print(f"Generated {len(all_recommendations)} total recommendations from {len(user_tracks)} user tracks")
+            print(f"📊 Generated {len(all_recommendations)} total recommendations from {len(user_tracks)} user tracks")
+            print(f"🎯 BACKEND SUMMARY: Found {len(all_recommendations)} songs after all recommendation calls")
             
             # Format recommendations and remove duplicates
             format_start = time.time()
+            print(f"🔄 Step 4: Processing & sorting recommendations by similarity...")
+            add_progress("Sorting and filtering recommendations...")
             formatted_recommendations = []
             seen_track_ids = set()
             for track in all_recommendations:
@@ -295,7 +329,13 @@ async def get_search_based_recommendations(
             extra_recommendations = []
             if len(formatted_recommendations) > n_recommendations:
                 extra_recommendations = formatted_recommendations[n_recommendations:]
-                print(f"Storing {len(extra_recommendations)} extra recommendations for future batches")
+                print(f"💾 Caching {len(extra_recommendations)} extra recommendations for instant batches")
+                print(f"🎯 BACKEND POOL: Adding {len(extra_recommendations)} songs to recommendation pool")
+                add_progress(f"Caching {len(extra_recommendations)} extra recommendations for instant batches...")
+            else:
+                print(f"🎯 BACKEND POOL: No extra recommendations to cache (only {len(formatted_recommendations)} total, requested {n_recommendations})")
+            
+            add_progress("Complete! Recommendations ready for delivery...")
             
             result = {
                 "recommendations": formatted_recommendations[:n_recommendations],
@@ -304,7 +344,8 @@ async def get_search_based_recommendations(
                 "analysis_track_count": len(user_tracks),
                 "excluded_saved_tracks": exclude_saved_tracks,
                 "total_generated": len(all_recommendations),
-                "processing_time": total_time
+                "processing_time": total_time,
+                "progress_messages": progress_messages  # Include progress messages
             }
             
         except Exception as e:
@@ -315,7 +356,7 @@ async def get_search_based_recommendations(
             print(f"Error from recommendation service: {result['error']}")
             raise HTTPException(status_code=400, detail=result["error"])
 
-        print(f"Successfully generated {len(result.get('recommendations', []))} recommendations")
+        print(f"🎉 Successfully generated {len(result.get('recommendations', []))} recommendations with {len(result.get('extra_recommendations', []))} cached for instant batches")
         return result
         
     except HTTPException:

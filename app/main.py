@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Query, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from app.api import auth, spotify_data, recommendations, youtube
+from app.api import auth, spotify_data, recommendations_lastfm, youtube
 from app.services.spotify_service import SpotifyService
 import os
 import sys
@@ -31,7 +31,7 @@ app.add_middleware(
 # Include routers
 app.include_router(auth.router)
 app.include_router(spotify_data.router)
-app.include_router(recommendations.router)
+app.include_router(recommendations_lastfm.router)
 app.include_router(youtube.router)
 
 # Add request logging middleware
