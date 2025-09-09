@@ -373,6 +373,8 @@ async def get_search_based_recommendations_stream(
                 # Start recommendation generation in a separate thread
                 def generate_recommendations():
                     try:
+                        progress_callback(f"Fetching saved tracks for recommendations...")
+                        
                         # Get user tracks for analysis - using saved tracks instead of recently played
                         user_tracks = []
                         seen_track_ids = set()  # Prevent duplicates
@@ -412,14 +414,13 @@ async def get_search_based_recommendations_stream(
                         
                         fetch_end_time = time.time()
                         fetch_duration = fetch_end_time - fetch_start_time
-                        
-                        # Update progress with track count
-                        progress_callback(f"Found {len(user_tracks)} saved tracks in your library")
-                        
+                    
                         # Get user's saved tracks to filter them out - only if requested
                         user_saved_tracks = set()
                         if exclude_saved_tracks:
                             try:
+                                progress_callback(f"Fetching saved tracks for filtering...")
+
                                 # Fetch ALL saved tracks (Spotify API max limit is 50)
                                 offset = 0
                                 limit = 50  # Spotify API maximum limit for saved tracks

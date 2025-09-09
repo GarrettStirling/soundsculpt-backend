@@ -1,6 +1,7 @@
 import requests
 import logging
 import unicodedata
+import re
 from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,10 @@ class DeezerService:
             search_query = f"{track_name} {artist_name}"
             normalized_query = f"{self.normalize_string(track_name)} {self.normalize_string(artist_name)}"
             
+            # Add simplified version for tracks with parenthetical content
+            simplified_track = re.sub(r'\s*\([^)]*\)', '', track_name).strip()
+            simplified_query = f"{simplified_track} {artist_name}" if simplified_track != track_name else None
+            
             # Search Deezer with original query first
             search_url = f"{self.base_url}/search"
             params = {
@@ -49,6 +54,14 @@ class DeezerService:
                 logger.info(f"🔄 No results with original query, trying normalized: '{normalized_query}'")
                 logger.info(f"   Original: '{search_query}' -> Normalized: '{normalized_query}'")
                 params['q'] = normalized_query
+                response = requests.get(search_url, params=params, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+            
+            # If still no results and we have a simplified query, try that
+            if not data.get('data') and simplified_query:
+                logger.info(f"🔄 No results with normalized query, trying simplified: '{simplified_query}'")
+                params['q'] = simplified_query
                 response = requests.get(search_url, params=params, timeout=10)
                 response.raise_for_status()
                 data = response.json()
