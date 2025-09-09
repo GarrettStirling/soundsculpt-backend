@@ -173,12 +173,13 @@ class LastFMRecommendationService:
                 similar_tracks = self.lastfm_service.get_similar_tracks(seed_track['artist'], seed_track['name'], limit=50)
                 
                 if not similar_tracks:
+                    print(f"⚠️ No similar tracks found for seed {i+1}: '{seed_track['name']}' by {seed_track['artist']}")
                     continue
                 
-                # Process similar tracks
+                print(f"🎵 Processing seed {i+1}: '{seed_track['name']}' by {seed_track['artist']} - found {len(similar_tracks)} similar tracks")
+                
+                # Process similar tracks (collect from all seeds first, then limit later)
                 for track in similar_tracks:
-                    if len(all_recommendations) >= n_recommendations:
-                        break
                     
                     track_name = track.get('name', '')
                     artist_name = track.get('artist', {}).get('name', '') if isinstance(track.get('artist'), dict) else str(track.get('artist', ''))
@@ -240,10 +241,31 @@ class LastFMRecommendationService:
                     recommended_track_ids.add(track_id)
                     seen_artists.add(artist_name.lower())
             
+            print(f"📊 Collected {len(all_recommendations)} total recommendations from {len(seed_tracks)} seed tracks")
+            
+            # Show breakdown by seed track
+            seed_counts = {}
+            for rec in all_recommendations:
+                seed = rec.get('seed_track', 'Unknown')
+                seed_counts[seed] = seed_counts.get(seed, 0) + 1
+            
+            for seed, count in seed_counts.items():
+                print(f"   🎵 {seed}: {count} recommendations")
 
             # Shuffle and limit results to mix recommendations from different seed tracks
             random.shuffle(all_recommendations)
             all_recommendations = all_recommendations[:n_recommendations]
+            
+            print(f"🎲 After shuffling and limiting to {n_recommendations}: {len(all_recommendations)} final recommendations")
+            
+            # Show final breakdown
+            final_seed_counts = {}
+            for rec in all_recommendations:
+                seed = rec.get('seed_track', 'Unknown')
+                final_seed_counts[seed] = final_seed_counts.get(seed, 0) + 1
+            
+            for seed, count in final_seed_counts.items():
+                print(f"   🎯 {seed}: {count} final recommendations")
 
             elapsed_time = time.time() - start_time
             

@@ -601,14 +601,90 @@ async def get_manual_recommendations(
                     seed_tracks_info.append({
                         'name': seed_track_name,
                         'artist': seed_artist_name,
-                        'id': seed_track_id
+                        'id': seed_track_id,
+                        'source': 'direct_track'
                     })
                 
             except Exception as e:
                 continue
         
+        # Process seed artists - get top tracks from each artist
+        seed_artists_info = []
+        for i, seed_artist_id in enumerate(request.seed_artists):
+            try:
+                seed_artist_info = sp.artist(seed_artist_id)
+                if not seed_artist_info:
+                    continue
+                
+                artist_name = seed_artist_info.get('name', '')
+                if artist_name:
+                    # Get top tracks from this artist
+                    top_tracks = sp.artist_top_tracks(seed_artist_id, country='US')
+                    if top_tracks and top_tracks.get('tracks'):
+                        # Take the first few top tracks as seeds
+                        for track in top_tracks['tracks'][:3]:  # Take top 3 tracks
+                            track_name = track.get('name', '')
+                            if track_name:
+                                seed_tracks_info.append({
+                                    'name': track_name,
+                                    'artist': artist_name,
+                                    'id': track['id'],
+                                    'source': 'artist_top_track'
+                                })
+                        seed_artists_info.append({
+                            'name': artist_name,
+                            'id': seed_artist_id,
+                            'tracks_added': min(3, len(top_tracks.get('tracks', [])))
+                        })
+                
+            except Exception as e:
+                print(f"Error processing seed artist {seed_artist_id}: {e}")
+                continue
+        
+        # Process seed playlists - get tracks from each playlist
+        seed_playlists_info = []
+        for i, seed_playlist_id in enumerate(request.seed_playlists):
+            try:
+                seed_playlist_info = sp.playlist(seed_playlist_id)
+                if not seed_playlist_info:
+                    continue
+                
+                playlist_name = seed_playlist_info.get('name', '')
+                if playlist_name:
+                    # Get tracks from this playlist
+                    playlist_tracks = sp.playlist_tracks(seed_playlist_id, limit=50)
+                    if playlist_tracks and playlist_tracks.get('items'):
+                        # Take tracks from the playlist as seeds
+                        for item in playlist_tracks['items'][:5]:  # Take first 5 tracks
+                            track = item.get('track')
+                            if track and track.get('name') and track.get('artists'):
+                                track_name = track.get('name', '')
+                                artist_name = track['artists'][0].get('name', '') if track['artists'] else ''
+                                if track_name and artist_name:
+                                    seed_tracks_info.append({
+                                        'name': track_name,
+                                        'artist': artist_name,
+                                        'id': track['id'],
+                                        'source': 'playlist_track'
+                                    })
+                        seed_playlists_info.append({
+                            'name': playlist_name,
+                            'id': seed_playlist_id,
+                            'tracks_added': min(5, len(playlist_tracks.get('items', [])))
+                        })
+                
+            except Exception as e:
+                print(f"Error processing seed playlist {seed_playlist_id}: {e}")
+                continue
+        
         if not seed_tracks_info:
-            raise HTTPException(status_code=400, detail="Could not retrieve any valid seed track information")
+            raise HTTPException(status_code=400, detail="Could not retrieve any valid seed information from tracks, artists, or playlists")
+        
+        print(f"📊 Manual discovery seeds processed:")
+        print(f"   🎵 Direct tracks: {len(request.seed_tracks)}")
+        print(f"   🎤 Artists: {len(seed_artists_info)} (added {sum(a['tracks_added'] for a in seed_artists_info)} tracks)")
+        print(f"   📋 Playlists: {len(seed_playlists_info)} (added {sum(p['tracks_added'] for p in seed_playlists_info)} tracks)")
+        print(f"   📝 Total seed tracks for recommendations: {len(seed_tracks_info)}")
         
         
         # Convert excluded track IDs to set
@@ -741,14 +817,90 @@ async def get_manual_recommendations_stream(
                     seed_tracks_info.append({
                         'name': seed_track_name,
                         'artist': seed_artist_name,
-                        'id': seed_track_id
+                        'id': seed_track_id,
+                        'source': 'direct_track'
                     })
                 
             except Exception as e:
                 continue
         
+        # Process seed artists - get top tracks from each artist
+        seed_artists_info = []
+        for i, seed_artist_id in enumerate(request.seed_artists):
+            try:
+                seed_artist_info = sp.artist(seed_artist_id)
+                if not seed_artist_info:
+                    continue
+                
+                artist_name = seed_artist_info.get('name', '')
+                if artist_name:
+                    # Get top tracks from this artist
+                    top_tracks = sp.artist_top_tracks(seed_artist_id, country='US')
+                    if top_tracks and top_tracks.get('tracks'):
+                        # Take the first few top tracks as seeds
+                        for track in top_tracks['tracks'][:3]:  # Take top 3 tracks
+                            track_name = track.get('name', '')
+                            if track_name:
+                                seed_tracks_info.append({
+                                    'name': track_name,
+                                    'artist': artist_name,
+                                    'id': track['id'],
+                                    'source': 'artist_top_track'
+                                })
+                        seed_artists_info.append({
+                            'name': artist_name,
+                            'id': seed_artist_id,
+                            'tracks_added': min(3, len(top_tracks.get('tracks', [])))
+                        })
+                
+            except Exception as e:
+                print(f"Error processing seed artist {seed_artist_id}: {e}")
+                continue
+        
+        # Process seed playlists - get tracks from each playlist
+        seed_playlists_info = []
+        for i, seed_playlist_id in enumerate(request.seed_playlists):
+            try:
+                seed_playlist_info = sp.playlist(seed_playlist_id)
+                if not seed_playlist_info:
+                    continue
+                
+                playlist_name = seed_playlist_info.get('name', '')
+                if playlist_name:
+                    # Get tracks from this playlist
+                    playlist_tracks = sp.playlist_tracks(seed_playlist_id, limit=50)
+                    if playlist_tracks and playlist_tracks.get('items'):
+                        # Take tracks from the playlist as seeds
+                        for item in playlist_tracks['items'][:5]:  # Take first 5 tracks
+                            track = item.get('track')
+                            if track and track.get('name') and track.get('artists'):
+                                track_name = track.get('name', '')
+                                artist_name = track['artists'][0].get('name', '') if track['artists'] else ''
+                                if track_name and artist_name:
+                                    seed_tracks_info.append({
+                                        'name': track_name,
+                                        'artist': artist_name,
+                                        'id': track['id'],
+                                        'source': 'playlist_track'
+                                    })
+                        seed_playlists_info.append({
+                            'name': playlist_name,
+                            'id': seed_playlist_id,
+                            'tracks_added': min(5, len(playlist_tracks.get('items', [])))
+                        })
+                
+            except Exception as e:
+                print(f"Error processing seed playlist {seed_playlist_id}: {e}")
+                continue
+        
         if not seed_tracks_info:
-            raise HTTPException(status_code=400, detail="Could not retrieve any valid seed track information")
+            raise HTTPException(status_code=400, detail="Could not retrieve any valid seed information from tracks, artists, or playlists")
+        
+        print(f"📊 Manual discovery seeds processed:")
+        print(f"   🎵 Direct tracks: {len(request.seed_tracks)}")
+        print(f"   🎤 Artists: {len(seed_artists_info)} (added {sum(a['tracks_added'] for a in seed_artists_info)} tracks)")
+        print(f"   📋 Playlists: {len(seed_playlists_info)} (added {sum(p['tracks_added'] for p in seed_playlists_info)} tracks)")
+        print(f"   📝 Total seed tracks for recommendations: {len(seed_tracks_info)}")
         
         
         # Convert excluded track IDs to set
@@ -931,16 +1083,56 @@ async def create_playlist_from_recommendations(
         
         # Add tracks to the playlist
         try:
+            # Filter out Last.fm tracks and only keep Spotify track IDs
+            spotify_track_ids = [track_id for track_id in request.track_ids if not track_id.startswith('lastfm_')]
+            
+            if not spotify_track_ids:
+                print("⚠️ No Spotify tracks found to add to playlist (all tracks are Last.fm recommendations)")
+                return PlaylistCreationResponse(
+                    success=False,
+                    playlist_id=playlist_id,
+                    playlist_url=playlist_url,
+                    message="Playlist created but no Spotify tracks available to add (all recommendations are from Last.fm)",
+                    tracks_added=0
+                )
+            
+            print(f"📝 Adding {len(spotify_track_ids)} Spotify tracks to playlist (filtered out {len(request.track_ids) - len(spotify_track_ids)} Last.fm tracks)")
+            
+            # Validate Spotify track IDs (should be 22 characters, alphanumeric)
+            valid_spotify_ids = []
+            for track_id in spotify_track_ids:
+                if len(track_id) == 22 and track_id.replace('-', '').replace('_', '').isalnum():
+                    valid_spotify_ids.append(track_id)
+                else:
+                    print(f"⚠️ Invalid Spotify track ID format: {track_id}")
+            
+            if not valid_spotify_ids:
+                print("❌ No valid Spotify track IDs found")
+                return PlaylistCreationResponse(
+                    success=False,
+                    playlist_id=playlist_id,
+                    playlist_url=playlist_url,
+                    message="Playlist created but no valid Spotify tracks found to add",
+                    tracks_added=0
+                )
+            
+            print(f"📝 Adding {len(valid_spotify_ids)} valid Spotify tracks to playlist")
+            
             # Convert track IDs to URIs
-            track_uris = [f"spotify:track:{track_id}" for track_id in request.track_ids]
+            track_uris = [f"spotify:track:{track_id}" for track_id in valid_spotify_ids]
             
             # Add tracks in batches (Spotify allows max 100 tracks per request)
             tracks_added = 0
             for i in range(0, len(track_uris), 100):
                 batch = track_uris[i:i+100]
-                sp.playlist_add_items(playlist_id, batch)
-                tracks_added += len(batch)
-                print(f"Added batch {i//100 + 1}: {len(batch)} tracks")
+                try:
+                    sp.playlist_add_items(playlist_id, batch)
+                    tracks_added += len(batch)
+                    print(f"✅ Added batch {i//100 + 1}: {len(batch)} tracks")
+                except Exception as batch_error:
+                    print(f"❌ Error adding batch {i//100 + 1}: {batch_error}")
+                    # Continue with next batch instead of failing completely
+                    continue
             
             print(f"✅ Successfully added {tracks_added} tracks to playlist")
             
@@ -955,11 +1147,19 @@ async def create_playlist_from_recommendations(
         except Exception as tracks_error:
             print(f"Error adding tracks to playlist: {tracks_error}")
             # Playlist was created but tracks couldn't be added
+            error_message = "Playlist created but failed to add tracks"
+            if "Unsupported URL" in str(tracks_error) or "400" in str(tracks_error):
+                error_message = "Playlist created but some tracks couldn't be added (may contain Last.fm recommendations)"
+            elif "401" in str(tracks_error):
+                error_message = "Playlist created but failed to add tracks (authentication issue)"
+            elif "403" in str(tracks_error):
+                error_message = "Playlist created but failed to add tracks (permission denied)"
+            
             return PlaylistCreationResponse(
                 success=False,
                 playlist_id=playlist_id,
                 playlist_url=playlist_url,
-                message=f"Playlist created but failed to add tracks: {str(tracks_error)}",
+                message=error_message,
                 tracks_added=0
             )
         
