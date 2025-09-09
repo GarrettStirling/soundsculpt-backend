@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Query, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from app.api import auth, spotify_data, recommendations, youtube
+from app.api import auth, spotify_data, recommendations_lastfm, youtube
 from app.services.spotify_service import SpotifyService
 import os
 import sys
@@ -31,20 +31,20 @@ app.add_middleware(
 # Include routers
 app.include_router(auth.router)
 app.include_router(spotify_data.router)
-app.include_router(recommendations.router)
+app.include_router(recommendations_lastfm.router)
 app.include_router(youtube.router)
 
 # Add request logging middleware
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start_time = time.time()
-    print(f"🌐 REQUEST: {request.method} {request.url}")
-    print(f"🌐 Headers: {dict(request.headers)}")
+    print(f"REQUEST: {request.method} {request.url}")
+    print(f"Headers: {dict(request.headers)}")
     if request.query_params:
-        print(f"🌐 Query Params: {dict(request.query_params)}")
+        print(f"Query Params: {dict(request.query_params)}")
     response = await call_next(request)
     process_time = time.time() - start_time
-    print(f"🌐 RESPONSE: {response.status_code} ({process_time:.2f}s)")
+    print(f"RESPONSE: {response.status_code} ({process_time:.2f}s)")
     return response
 
 @app.get("/")
@@ -81,4 +81,4 @@ async def fallback_callback(code: str = Query(...), state: str = Query(None)):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8001)

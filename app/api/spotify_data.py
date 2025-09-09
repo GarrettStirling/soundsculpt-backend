@@ -1,6 +1,5 @@
 from fastapi import APIRouter, HTTPException, Header, Query
 from app.services.spotify_service import SpotifyService
-from app.services.deezer_service import DeezerService
 from typing import Optional, Dict, List
 from pydantic import BaseModel
 import spotipy
@@ -9,7 +8,6 @@ router = APIRouter(prefix="/spotify", tags=["Spotify Data"])
 
 # Initialize services
 spotify_service = SpotifyService()
-deezer_service = DeezerService()
 
 class UpdatePlaylistRequest(BaseModel):
     track_uris: List[str]
@@ -260,27 +258,17 @@ async def get_deezer_preview(
     Get Deezer preview URL for a track
     """
     try:
+        from app.services.deezer_service import deezer_service
+        
         print(f"🎵 Searching Deezer for: '{track_name}' by '{artist_name}'")
+        result = deezer_service.search_track(track_name, artist_name)
         
-        # Search for the track on Deezer
-        deezer_result = deezer_service.search_track(track_name, artist_name)
-        
-        if deezer_result:
-            print(f"✅ Found Deezer preview: {deezer_result['preview_url']}")
-            return {
-                "found": True,
-                "preview_url": deezer_result['preview_url'],
-                "deezer_id": deezer_result['deezer_id'],
-                "title": deezer_result['title'],
-                "artist": deezer_result['artist'],
-                "duration": deezer_result['duration']
-            }
+        if result["found"]:
+            print(f"✅ Deezer preview found: {result['preview_url']}")
         else:
-            print(f"❌ No Deezer preview found for: '{track_name}' by '{artist_name}'")
-            return {
-                "found": False,
-                "error": "No preview available on Deezer"
-            }
+            print(f"❌ Deezer preview not found: {result.get('error', 'Unknown error')}")
+            
+        return result
             
     except Exception as e:
         print(f"Error getting Deezer preview: {e}")

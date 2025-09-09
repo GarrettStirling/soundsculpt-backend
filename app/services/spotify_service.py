@@ -17,9 +17,9 @@ class SpotifyService:
 
         # Define the scope of permissions we need (expanded for recommendations and playlists)
         self.scope = (
-            "user-read-recently-played user-library-read playlist-read-private "
-            "user-top-read playlist-read-collaborative user-read-email "
-            "playlist-modify-public playlist-modify-private"
+            "user-read-recently-played user-library-read user-library-modify "
+            "playlist-read-private user-top-read playlist-read-collaborative "
+            "user-read-email playlist-modify-public playlist-modify-private"
         )
         
         # Initialize Spotify OAuth
@@ -32,7 +32,7 @@ class SpotifyService:
     
     def get_auth_url(self) -> str:
         """Get the authorization URL for Spotify login"""
-        return self.sp_oauth.get_authorize_url()
+        return self.sp_oauth.get_authorize_url(state="state")
     
     def get_access_token(self, code: str) -> Optional[Dict]:
         """Exchange authorization code for access token"""

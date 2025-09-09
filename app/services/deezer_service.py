@@ -1,146 +1,121 @@
-"""
-Deezer API Service - For getting audio previews
-"""
-
 import requests
-import os
-from typing import Optional, Dict
-from dotenv import load_dotenv
+import logging
+import unicodedata
+from typing import Dict, Optional
 
-load_dotenv()
+logger = logging.getLogger(__name__)
 
 class DeezerService:
     def __init__(self):
-        self.api_key = os.getenv('RAPIDAPI_KEY')
-        self.base_url = "https://deezerdevs-deezer.p.rapidapi.com"
-        self.headers = {
-            'X-RapidAPI-Key': self.api_key,
-            'X-RapidAPI-Host': 'deezerdevs-deezer.p.rapidapi.com'
-        }
+        self.base_url = "https://api.deezer.com"
     
-    def search_track(self, track_name: str, artist_name: str) -> Optional[Dict]:
+    def normalize_string(self, text: str) -> str:
         """
-        Search for a track on Deezer and return the best match with preview
-        Uses improved matching logic to avoid wrong songs
+        Normalize accented characters and convert to lowercase for better matching
+        Example: "Colón" -> "colon", "José" -> "jose"
+        """
+        if not text:
+            return ""
+        # Normalize unicode characters (NFD = Normalization Form Decomposed)
+        normalized = unicodedata.normalize('NFD', text)
+        # Remove accent marks (combining characters)
+        without_accents = ''.join(c for c in normalized if unicodedata.category(c) != 'Mn')
+        return without_accents.lower().strip()
+        
+    def search_track(self, track_name: str, artist_name: str) -> Dict:
+        """
+        Search for a track on Deezer and return preview URL if available
         """
         try:
-            # Clean the search query
-            query = f'"{track_name}" "{artist_name}"'.strip()
+            logger.info(f"🔍 Searching Deezer for: '{track_name}' by '{artist_name}'")
             
-            # Search for the track
+            # Create search query with both original and normalized versions
+            search_query = f"{track_name} {artist_name}"
+            normalized_query = f"{self.normalize_string(track_name)} {self.normalize_string(artist_name)}"
+            
+            # Search Deezer with original query first
             search_url = f"{self.base_url}/search"
             params = {
-                'q': query,
-                'limit': 25  # Get more results to find best match
+                'q': search_query,
+                'limit': 10
             }
             
-            response = requests.get(search_url, headers=self.headers, params=params, timeout=10)
+            response = requests.get(search_url, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
             
-            if response.status_code == 200:
+            # If no results with original query, try normalized query
+            if not data.get('data') and search_query != normalized_query:
+                logger.info(f"🔄 No results with original query, trying normalized: '{normalized_query}'")
+                logger.info(f"   Original: '{search_query}' -> Normalized: '{normalized_query}'")
+                params['q'] = normalized_query
+                response = requests.get(search_url, params=params, timeout=10)
+                response.raise_for_status()
                 data = response.json()
-                tracks = data.get('data', [])
-                
-                # Normalize names for comparison
-                track_lower = track_name.lower().strip()
-                artist_lower = artist_name.lower().strip()
-                
-                # Remove common parenthetical content for matching
-                track_clean = track_lower.replace('(acoustic)', '').replace('(live)', '').replace('(remix)', '').strip()
-                
-                # Look for exact or very close matches first
-                best_match = None
-                best_score = 0
-                
-                for track in tracks:
-                    preview_url = track.get('preview')
-                    if not preview_url or preview_url == "":
-                        continue
-                    
-                    deezer_title = track.get('title', '').lower().strip()
-                    deezer_artist = track.get('artist', {}).get('name', '').lower().strip()
-                    
-                    # Calculate matching score
-                    score = 0
-                    
-                    # Exact track name match gets highest score
-                    if track_lower == deezer_title:
-                        score += 50
-                    elif track_clean in deezer_title or deezer_title in track_clean:
-                        score += 30
-                    elif any(word in deezer_title for word in track_lower.split() if len(word) > 2):
-                        score += 10
-                    
-                    # Exact artist match
-                    if artist_lower == deezer_artist:
-                        score += 50
-                    elif artist_lower in deezer_artist or deezer_artist in artist_lower:
-                        score += 30
-                    elif any(word in deezer_artist for word in artist_lower.split() if len(word) > 2):
-                        score += 10
-                    
-                    # Bonus for having both artist and track words
-                    if score >= 60:  # Good match threshold
-                        best_match = track
-                        best_score = score
-                        break  # Take first good match
-                    elif score > best_score:
-                        best_match = track
-                        best_score = score
-                
-                if best_match and best_score >= 30:  # Minimum threshold
-                    print(f"✅ Found match with score {best_score}: '{best_match.get('title')}' by '{best_match.get('artist', {}).get('name')}'")
-                    return {
-                        'deezer_id': best_match.get('id'),
-                        'title': best_match.get('title'),
-                        'artist': best_match.get('artist', {}).get('name'),
-                        'preview_url': best_match.get('preview'),
-                        'duration': best_match.get('duration'),
-                        'album': best_match.get('album', {}).get('title'),
-                        'track_name': best_match.get('title'),  # Add standardized field names
-                        'artist_name': best_match.get('artist', {}).get('name'),
-                        'album_name': best_match.get('album', {}).get('title'),
-                        'match_score': best_score
-                    }
-                
-                # If no good match found, return None
-                print(f"❌ No suitable Deezer match found for: {track_name} by {artist_name} (best score: {best_score})")
-                return None
-            else:
-                print(f"Deezer search failed with status {response.status_code}")
-                return None
-                
-        except Exception as e:
-            print(f"Error searching Deezer: {e}")
-            return None
-    
-    def get_track_by_id(self, deezer_id: str) -> Optional[Dict]:
-        """
-        Get track details by Deezer ID
-        """
-        try:
-            track_url = f"{self.base_url}/track/{deezer_id}"
-            response = requests.get(track_url, headers=self.headers, timeout=10)
             
-            if response.status_code == 200:
-                track = response.json()
-                preview_url = track.get('preview')
+            if not data.get('data'):
+                logger.info(f"❌ No Deezer results found for: '{search_query}' or '{normalized_query}'")
+                return {
+                    "found": False,
+                    "error": "No results found"
+                }
+            
+            # Look for the best match
+            for track in data['data']:
+                title = track['title']
+                artist = track['artist']['name']
                 
-                if preview_url and preview_url != "":
-                    return {
-                        'deezer_id': track.get('id'),
-                        'title': track.get('title'),
-                        'artist': track.get('artist', {}).get('name'),
-                        'preview_url': preview_url,
-                        'duration': track.get('duration'),
-                        'album': track.get('album', {}).get('title')
-                    }
-                else:
-                    print(f"No preview available for Deezer track {deezer_id}")
-                    return None
-            else:
-                print(f"Deezer track fetch failed with status {response.status_code}")
-                return None
+                # Normalize both search terms and Deezer results for better matching
+                normalized_track_name = self.normalize_string(track_name)
+                normalized_artist_name = self.normalize_string(artist_name)
+                normalized_title = self.normalize_string(title)
+                normalized_artist = self.normalize_string(artist)
                 
+                # Check if track name and artist match reasonably well
+                track_match = (normalized_track_name in normalized_title or 
+                              normalized_title in normalized_track_name)
+                artist_match = (normalized_artist_name in normalized_artist or 
+                               normalized_artist in normalized_artist_name)
+                
+                if track_match and artist_match:
+                    # Check if preview is available
+                    preview_url = track.get('preview')
+                    if preview_url:
+                        logger.info(f"✅ Found Deezer preview for: '{track_name}' by '{artist_name}'")
+                        logger.info(f"   🎵 Title: {track['title']}")
+                        logger.info(f"   🎵 Artist: {track['artist']['name']}")
+                        logger.info(f"   🎵 Preview URL: {preview_url}")
+                        
+                        return {
+                            "found": True,
+                            "preview_url": preview_url,
+                            "title": track['title'],
+                            "artist": track['artist']['name'],
+                            "album": track['album']['title'],
+                            "duration": track['duration']
+                        }
+                    else:
+                        logger.info(f"⚠️ Deezer track found but no preview available: '{track['title']}'")
+                        continue
+            
+            logger.info(f"❌ No Deezer preview found for: '{search_query}'")
+            return {
+                "found": False,
+                "error": "No preview available"
+            }
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"❌ Deezer API request failed: {e}")
+            return {
+                "found": False,
+                "error": f"API request failed: {str(e)}"
+            }
         except Exception as e:
-            print(f"Error fetching Deezer track: {e}")
-            return None
+            logger.error(f"❌ Deezer search error: {e}")
+            return {
+                "found": False,
+                "error": str(e)
+            }
+
+# Create global instance
+deezer_service = DeezerService()
