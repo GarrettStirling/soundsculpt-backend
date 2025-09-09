@@ -196,10 +196,10 @@ class LastFMRecommendationService:
                     
                     # Generate track ID
                     if track.get('mbid'):
-                        track_id = f"lastfm_{track['mbid']}"
+                        track_id = f"lastfm_{track['mbid']}_{track_name.replace(' ', '_')}_by_{artist_name.replace(' ', '_')}"
                     else:
                         normalized_str = f"{track_name.lower().strip()}|{artist_name.lower().strip()}"
-                        track_id = f"lastfm_{hash(normalized_str)}"
+                        track_id = f"lastfm_{hash(normalized_str)}_{track_name.replace(' ', '_')}_by_{artist_name.replace(' ', '_')}"
                     
                     # Skip if already recommended, excluded, or from seen artists
                     if (artist_name.lower() in seen_artists or 
@@ -387,11 +387,11 @@ class LastFMRecommendationService:
                 
                 # Generate track ID
                 if track.get('mbid'):
-                    track_id = f"lastfm_{track['mbid']}"
+                    track_id = f"lastfm_{track['mbid']}_{track_name.replace(' ', '_')}_by_{artist_name.replace(' ', '_')}"
                 else:
                     # Use consistent hash based on track name and artist
                     normalized_str = f"{track_name.lower().strip()}|{artist_name.lower().strip()}"
-                    track_id = f"lastfm_{hash(normalized_str)}"
+                    track_id = f"lastfm_{hash(normalized_str)}_{track_name.replace(' ', '_')}_by_{artist_name.replace(' ', '_')}"
                 
                 # Debug logging for track ID generation
                 if len(all_recommendations) < 3:  # Only log first few for debugging
@@ -476,11 +476,11 @@ class LastFMRecommendationService:
                         
                                                 # Generate consistent track ID
                         if track.get('mbid'):
-                            track_id = f"lastfm_{track.get('mbid')}"
+                            track_id = f"lastfm_{track.get('mbid')}_{track_name.replace(' ', '_')}_by_{artist_name.replace(' ', '_')}"
                         else:
                             # Use consistent hash based on track name and artist
                             normalized_str = f"{track_name.lower().strip()}|{artist_name.lower().strip()}"
-                            track_id = f"lastfm_{hash(normalized_str)}"
+                            track_id = f"lastfm_{hash(normalized_str)}_{track_name.replace(' ', '_')}_by_{artist_name.replace(' ', '_')}"
                         
                         # Skip if already excluded or already recommended
                         if track_id in all_excluded_tracks or track_id in recommended_track_ids:
@@ -541,11 +541,11 @@ class LastFMRecommendationService:
                         
                                                 # Generate consistent track ID
                         if track.get('mbid'):
-                            track_id = f"lastfm_{track.get('mbid')}"
+                            track_id = f"lastfm_{track.get('mbid')}_{track_name.replace(' ', '_')}_by_{artist_name.replace(' ', '_')}"
                         else:
                             # Use consistent hash based on track name and artist
                             normalized_str = f"{track_name.lower().strip()}|{artist_name.lower().strip()}"
-                            track_id = f"lastfm_{hash(normalized_str)}"
+                            track_id = f"lastfm_{hash(normalized_str)}_{track_name.replace(' ', '_')}_by_{artist_name.replace(' ', '_')}"
                         
                         if (not track_name or not artist_name or 
                             artist_name.lower() in seen_artists or 

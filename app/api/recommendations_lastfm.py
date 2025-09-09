@@ -29,6 +29,7 @@ class PlaylistCreationRequest(BaseModel):
     name: str
     description: Optional[str] = ""
     track_ids: List[str]
+    track_data: Optional[List[dict]] = []  # Full track data with name, artist, id
 
 class PlaylistCreationResponse(BaseModel):
     success: bool
@@ -462,8 +463,7 @@ async def get_search_based_recommendations_stream(
                             end_start = max(0, total_tracks - 100 - (generation_seed % 50))
                             end_tracks = user_tracks[end_start:end_start + 50]
                             
-                            
-                            
+                        
                             # Combine and shuffle for variety
                             import random
                             random.seed(generation_seed)
@@ -783,14 +783,27 @@ async def get_manual_recommendations_stream(
     Get Last.fm-based recommendations for manually selected seed tracks with streaming progress
     """
     try:
-        print(f"Streaming manual discovery request received with {len(request.seed_tracks)} seed tracks")
+        print(f"🔍 BACKEND DEBUG: Manual discovery request received")
+        print(f"  - seed_tracks: {request.seed_tracks}")
+        print(f"  - seed_artists: {request.seed_artists}")
+        print(f"  - seed_playlists: {request.seed_playlists}")
+        print(f"  - n_recommendations: {request.n_recommendations}")
+        print(f"  - popularity: {request.popularity}")
+        print(f"  - excluded_track_ids: {request.excluded_track_ids}")
+        print(f"  - exclude_saved_tracks: {request.exclude_saved_tracks}")
+        print(f"  - token length: {len(request.token) if request.token else 0}")
         
         if not request.token or len(request.token) < 10:
+            print("❌ ERROR: Invalid or missing access token")
             raise HTTPException(status_code=400, detail="Invalid or missing access token")
         
-        # Validate at least one seed track is provided
-        if not request.seed_tracks:
-            raise HTTPException(status_code=400, detail="At least one seed track must be provided for recommendations")
+        # Check if we have any seed data (tracks, artists, or playlists)
+        total_seeds = len(request.seed_tracks) + len(request.seed_artists) + len(request.seed_playlists)
+        print(f"  - Total seed items: {total_seeds} (tracks: {len(request.seed_tracks)}, artists: {len(request.seed_artists)}, playlists: {len(request.seed_playlists)})")
+        
+        if total_seeds == 0:
+            print("❌ ERROR: No seed data provided")
+            raise HTTPException(status_code=400, detail="At least one seed track, artist, or playlist must be provided for recommendations")
         
         sp = spotify_service.create_spotify_client(request.token)
         
@@ -1053,7 +1066,9 @@ async def create_playlist_from_recommendations(
 ):
     """Create a Spotify playlist from recommendation track IDs"""
     try:
-        print(f"Creating playlist '{request.name}' with {len(request.track_ids)} tracks")
+        print(f"🔍 PLAYLIST CREATION DEBUG: Creating playlist '{request.name}' with {len(request.track_ids)} tracks")
+        print(f"📋 Track IDs received: {request.track_ids[:5]}...")  # Show first 5 track IDs for debugging
+        print(f"📋 All track IDs: {request.track_ids}")  # Show all track IDs for debugging
         # Validate access token
         try:
             sp = spotify_service.create_spotify_client(token)
@@ -1083,22 +1098,17 @@ async def create_playlist_from_recommendations(
         
         # Add tracks to the playlist
         try:
-            # Filter out Last.fm tracks and only keep Spotify track IDs
-            spotify_track_ids = [track_id for track_id in request.track_ids if not track_id.startswith('lastfm_')]
+            # Separate Spotify track IDs from Last.fm track names
+            # Normalize case to handle both 'lastfm_' and 'Lastfm_' prefixes
+            spotify_track_ids = [track_id for track_id in request.track_ids if not track_id.lower().startswith('lastfm_')]
+            lastfm_track_names = [track_id for track_id in request.track_ids if track_id.lower().startswith('lastfm_')]
             
-            if not spotify_track_ids:
-                print("⚠️ No Spotify tracks found to add to playlist (all tracks are Last.fm recommendations)")
-                return PlaylistCreationResponse(
-                    success=False,
-                    playlist_id=playlist_id,
-                    playlist_url=playlist_url,
-                    message="Playlist created but no Spotify tracks available to add (all recommendations are from Last.fm)",
-                    tracks_added=0
-                )
+            print(f"📝 Processing {len(spotify_track_ids)} Spotify tracks and {len(lastfm_track_names)} Last.fm tracks")
+            print(f"🔍 DEBUG: Case normalization - Original track IDs: {request.track_ids[:3]}...")
+            print(f"🔍 DEBUG: Spotify track IDs: {spotify_track_ids[:3]}...")
+            print(f"🔍 DEBUG: Last.fm track IDs: {lastfm_track_names[:3]}...")
             
-            print(f"📝 Adding {len(spotify_track_ids)} Spotify tracks to playlist (filtered out {len(request.track_ids) - len(spotify_track_ids)} Last.fm tracks)")
-            
-            # Validate Spotify track IDs (should be 22 characters, alphanumeric)
+            # Validate existing Spotify track IDs
             valid_spotify_ids = []
             for track_id in spotify_track_ids:
                 if len(track_id) == 22 and track_id.replace('-', '').replace('_', '').isalnum():
@@ -1106,20 +1116,84 @@ async def create_playlist_from_recommendations(
                 else:
                     print(f"⚠️ Invalid Spotify track ID format: {track_id}")
             
-            if not valid_spotify_ids:
-                print("❌ No valid Spotify track IDs found")
+            # Search Spotify for Last.fm tracks using track_data
+            found_spotify_ids = []
+            if lastfm_track_names and request.track_data:
+                print(f"🔍 Searching Spotify for {len(lastfm_track_names)} Last.fm tracks using track_data...")
+                
+                # Create a lookup map from track ID to track data
+                track_data_map = {track['id']: track for track in request.track_data}
+                
+                for lastfm_track_id in lastfm_track_names:
+                    try:
+                        # Get track data from the lookup map
+                        track_info = track_data_map.get(lastfm_track_id)
+                        if not track_info:
+                            print(f"⚠️ No track data found for ID: {lastfm_track_id}")
+                            continue
+                        
+                        track_name = track_info.get('name', '')
+                        artist_name = track_info.get('artist', '')
+                        
+                        if not track_name or not artist_name:
+                            print(f"⚠️ Missing track name or artist for ID: {lastfm_track_id}")
+                            continue
+                        
+                        # Create search query
+                        search_query = f"track:\"{track_name}\" artist:\"{artist_name}\""
+                        print(f"🔍 Searching Spotify for: '{search_query}'")
+                        
+                        # Search Spotify for this track
+                        search_results = sp.search(q=search_query, type='track', limit=1)
+                        
+                        if search_results and search_results.get('tracks', {}).get('items'):
+                            spotify_track = search_results['tracks']['items'][0]
+                            spotify_track_id = spotify_track['id']
+                            found_spotify_ids.append(spotify_track_id)
+                            print(f"✅ Found Spotify track: '{spotify_track['name']}' by {spotify_track['artists'][0]['name']} (ID: {spotify_track_id})")
+                        else:
+                            print(f"❌ Could not find Spotify track for: {search_query}")
+                            print(f"   Search results: {search_results}")
+                            
+                    except Exception as search_error:
+                        print(f"❌ Error searching for track {lastfm_track_id}: {search_error}")
+                        continue
+            
+            # Combine all valid Spotify track IDs
+            all_spotify_ids = valid_spotify_ids + found_spotify_ids
+            
+            if not all_spotify_ids:
+                print("❌ No Spotify tracks found to add to playlist")
                 return PlaylistCreationResponse(
                     success=False,
                     playlist_id=playlist_id,
                     playlist_url=playlist_url,
-                    message="Playlist created but no valid Spotify tracks found to add",
+                    message="Playlist created but no Spotify tracks found to add",
                     tracks_added=0
                 )
             
-            print(f"📝 Adding {len(valid_spotify_ids)} valid Spotify tracks to playlist")
+            print(f"📝 Adding {len(all_spotify_ids)} total Spotify tracks to playlist ({len(valid_spotify_ids)} direct + {len(found_spotify_ids)} from Last.fm search)")
+            print(f"🎵 Spotify track IDs to add: {all_spotify_ids[:5]}...")  # Show first 5 Spotify track IDs
+            
+            # Debug: Show what tracks we're actually adding by fetching their details
+            if all_spotify_ids:
+                print("🔍 DEBUG: Fetching details of tracks being added to playlist:")
+                for i, track_id in enumerate(all_spotify_ids[:5]):  # Show first 5 tracks
+                    try:
+                        track_details = sp.track(track_id)
+                        print(f"   {i+1}. '{track_details['name']}' by {track_details['artists'][0]['name']} (ID: {track_id})")
+                    except Exception as e:
+                        print(f"   {i+1}. Could not fetch details for track ID {track_id}: {e}")
+                if len(all_spotify_ids) > 5:
+                    print(f"   ... and {len(all_spotify_ids) - 5} more tracks")
+                
+                # Debug: Show the mapping from original track IDs to final Spotify IDs
+                print("🔍 DEBUG: Track ID mapping:")
+                print(f"   Original track IDs: {request.track_ids[:5]}...")
+                print(f"   Final Spotify IDs: {all_spotify_ids[:5]}...")
             
             # Convert track IDs to URIs
-            track_uris = [f"spotify:track:{track_id}" for track_id in valid_spotify_ids]
+            track_uris = [f"spotify:track:{track_id}" for track_id in all_spotify_ids]
             
             # Add tracks in batches (Spotify allows max 100 tracks per request)
             tracks_added = 0
