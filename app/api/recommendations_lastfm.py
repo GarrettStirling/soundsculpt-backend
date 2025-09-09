@@ -29,7 +29,6 @@ class PlaylistCreationRequest(BaseModel):
     name: str
     description: Optional[str] = ""
     track_ids: List[str]
-    token: str
 
 class PlaylistCreationResponse(BaseModel):
     success: bool

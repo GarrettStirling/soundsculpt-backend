@@ -256,16 +256,19 @@ async def get_deezer_preview(
 ):
     """
     Get Deezer preview URL for a track
-    Note: Deezer service is currently disabled - returns not found
     """
     try:
-        print(f"🎵 Deezer service disabled - skipping search for: '{track_name}' by '{artist_name}'")
+        from app.services.deezer_service import deezer_service
         
-        # Return not found since Deezer service is not implemented
-        return {
-            "found": False,
-            "error": "Deezer service not available"
-        }
+        print(f"🎵 Searching Deezer for: '{track_name}' by '{artist_name}'")
+        result = deezer_service.search_track(track_name, artist_name)
+        
+        if result["found"]:
+            print(f"✅ Deezer preview found: {result['preview_url']}")
+        else:
+            print(f"❌ Deezer preview not found: {result.get('error', 'Unknown error')}")
+            
+        return result
             
     except Exception as e:
         print(f"Error getting Deezer preview: {e}")

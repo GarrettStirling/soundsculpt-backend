@@ -241,11 +241,12 @@ class LastFMRecommendationService:
                     seen_artists.add(artist_name.lower())
             
 
-            # Shuffle and limit results
+            # Shuffle and limit results to mix recommendations from different seed tracks
             random.shuffle(all_recommendations)
             all_recommendations = all_recommendations[:n_recommendations]
 
             elapsed_time = time.time() - start_time
+            
             self.add_progress_message(f"Found {len(all_recommendations)} perfect recommendations for you!")
             if progress_callback:
                 progress_callback(f"Found {len(all_recommendations)} perfect recommendations for you!")
@@ -269,7 +270,8 @@ class LastFMRecommendationService:
                                          user_saved_tracks: Set[str] = None, 
                                          access_token: str = None,
                                          popularity: int = 50,
-                                         depth: int = 3) -> Dict:
+                                         depth: int = 3,
+                                         progress_callback: callable = None) -> Dict:
         """
         Get recommendations based on Last.fm similarity data
         """

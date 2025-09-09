@@ -1,5 +1,6 @@
 import requests
 import logging
+import unicodedata
 from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
@@ -10,10 +11,17 @@ class YouTubeService:
         self.base_url = "https://www.googleapis.com/youtube/v3"
     
     def _normalize_string(self, text: str) -> str:
-        """Normalize string for better matching by removing special characters and spaces"""
+        """Normalize string for better matching by removing special characters, accents, and spaces"""
         import re
+        if not text:
+            return ""
+        
+        # First normalize accented characters
+        normalized = unicodedata.normalize('NFD', text)
+        without_accents = ''.join(c for c in normalized if unicodedata.category(c) != 'Mn')
+        
         # Remove special characters and convert to lowercase
-        normalized = re.sub(r'[^\w\s]', '', text.lower())
+        normalized = re.sub(r'[^\w\s]', '', without_accents.lower())
         # Remove extra spaces
         normalized = ' '.join(normalized.split())
         return normalized
@@ -88,6 +96,18 @@ class YouTubeService:
                     f'{track_name} "{artist_variant}"',
                 ]
                 
+                # Add normalized versions for accented characters
+                normalized_track_name = self._normalize_string(track_name)
+                normalized_artist_variant = self._normalize_string(artist_variant)
+                if (normalized_track_name != track_name.lower() or 
+                    normalized_artist_variant != artist_variant.lower()):
+                    search_queries.extend([
+                        f'"{normalized_track_name}" "{normalized_artist_variant}" official audio',
+                        f'"{normalized_track_name}" "{normalized_artist_variant}" official music video',
+                        f'"{normalized_track_name}" "{normalized_artist_variant}" official',
+                        f'{normalized_track_name} {normalized_artist_variant} official',
+                    ])
+                
                 # Add special handling for artists with pipe characters
                 if '|' in artist_variant:
                     # Try with "PAPA PEET" (no pipe)
@@ -99,6 +119,17 @@ class YouTubeService:
                             f'"{track_name}" "{clean_artist}" official',
                             f'{track_name} {clean_artist} official',
                         ])
+                    
+                    # Try with "PAPA" and "PEET" separately
+                    parts = [part.strip() for part in artist_variant.split('|') if part.strip()]
+                    if len(parts) >= 2:
+                        for part in parts:
+                            search_queries.extend([
+                                f'"{track_name}" "{part}" official audio',
+                                f'"{track_name}" "{part}" official music video',
+                                f'"{track_name}" "{part}" official',
+                                f'{track_name} {part} official',
+                            ])
                 
                 for query in search_queries:
                     logger.debug(f"🔍 Trying search query: '{query}'")
@@ -185,6 +216,15 @@ class YouTubeService:
                                 if is_official: confidence_score += 20
                                 if track_word_matches >= len(track_words) * 0.8: confidence_score += 10
                                 if artist_word_matches: confidence_score += 10
+                                
+                                # Bonus for exact artist name matches (especially for pipe characters)
+                                if '|' in artist_variant:
+                                    # Check if both parts of the artist name are found
+                                    parts = [part.strip().lower() for part in artist_variant.split('|') if part.strip()]
+                                    parts_found = sum(1 for part in parts if part in title or part in channel_title)
+                                    if parts_found == len(parts):  # All parts found
+                                        confidence_score += 20
+                                        print(f"🎯 YOUTUBE SERVICE DEBUG: Exact artist parts match! Found {parts_found}/{len(parts)} parts")
                                 
                                 confidence = 'high' if confidence_score >= 70 else 'medium' if confidence_score >= 50 else 'low'
                                 
