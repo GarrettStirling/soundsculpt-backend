@@ -26,10 +26,14 @@ async def get_youtube_url(
         raise HTTPException(status_code=500, detail="YouTube service not configured")
     
     try:
+        print(f"🎵 YOUTUBE DEBUG: Searching for '{track_name}' by '{artist_name}'")
         result = youtube_service.search_track(track_name, artist_name)
         
         if not result:
+            print(f"❌ YOUTUBE DEBUG: No results found for '{track_name}' by '{artist_name}'")
             raise HTTPException(status_code=404, detail="Track not found on YouTube")
+        
+        print(f"✅ YOUTUBE DEBUG: Found video - ID: {result.get('video_id')}, Title: {result.get('title')}, URL: {result.get('youtube_url')}")
         
         return {
             "success": True,

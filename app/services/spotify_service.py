@@ -17,9 +17,9 @@ class SpotifyService:
 
         # Define the scope of permissions we need (expanded for recommendations and playlists)
         self.scope = (
-            "user-read-recently-played user-library-read playlist-read-private "
-            "user-top-read playlist-read-collaborative user-read-email "
-            "playlist-modify-public playlist-modify-private"
+            "user-read-recently-played user-library-read user-library-modify "
+            "playlist-read-private user-top-read playlist-read-collaborative "
+            "user-read-email playlist-modify-public playlist-modify-private"
         )
         
         # Initialize Spotify OAuth

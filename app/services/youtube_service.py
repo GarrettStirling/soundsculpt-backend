@@ -53,9 +53,9 @@ class YouTubeService:
             # Handle multiple artists - split by common separators
             artist_variations = [artist_name]
             
-            # If artist contains "and", "feat", "&", try each artist separately
-            if any(sep in artist_name.lower() for sep in [' and ', ' feat ', ' feat. ', ' ft ', ' ft. ', ' & ', ', ']):
-                separators = [' and ', ' feat ', ' feat. ', ' ft ', ' ft. ', ' & ', ', ']
+            # If artist contains "and", "feat", "&", "|", try each artist separately
+            if any(sep in artist_name.lower() for sep in [' and ', ' feat ', ' feat. ', ' ft ', ' ft. ', ' & ', ', ', ' | ']):
+                separators = [' and ', ' feat ', ' feat. ', ' ft ', ' ft. ', ' & ', ', ', ' | ']
                 temp_artists = [artist_name]
                 
                 for sep in separators:
@@ -87,6 +87,18 @@ class YouTubeService:
                     f'"{track_name}" {artist_variant}',
                     f'{track_name} "{artist_variant}"',
                 ]
+                
+                # Add special handling for artists with pipe characters
+                if '|' in artist_variant:
+                    # Try with "PAPA PEET" (no pipe)
+                    clean_artist = artist_variant.replace('|', '').replace('  ', ' ').strip()
+                    if clean_artist and clean_artist != artist_variant:
+                        search_queries.extend([
+                            f'"{track_name}" "{clean_artist}" official audio',
+                            f'"{track_name}" "{clean_artist}" official music video',
+                            f'"{track_name}" "{clean_artist}" official',
+                            f'{track_name} {clean_artist} official',
+                        ])
                 
                 for query in search_queries:
                     logger.debug(f"🔍 Trying search query: '{query}'")
@@ -176,6 +188,15 @@ class YouTubeService:
                                 
                                 confidence = 'high' if confidence_score >= 70 else 'medium' if confidence_score >= 50 else 'low'
                                 
+                                youtube_url = f"https://www.youtube.com/watch?v={video_id}"
+                                print(f"🎵 YOUTUBE SERVICE DEBUG: Selected video for '{track_name}' by '{artist_name}'")
+                                print(f"   📺 Video ID: {video_id}")
+                                print(f"   📺 Title: {item['snippet']['title']}")
+                                print(f"   📺 Channel: {item['snippet']['channelTitle']}")
+                                print(f"   📺 URL: {youtube_url}")
+                                print(f"   📺 Confidence: {confidence} ({confidence_score}/100)")
+                                print(f"   📺 Search Query Used: '{query}'")
+                                
                                 # This looks like a good match
                                 return {
                                     'video_id': video_id,
@@ -184,7 +205,7 @@ class YouTubeService:
                                     'thumbnail': item['snippet']['thumbnails'].get('default', {}).get('url'),
                                     'duration': video_details['duration'],
                                     'view_count': video_details.get('view_count', 0),
-                                    'youtube_url': f"https://www.youtube.com/watch?v={video_id}",
+                                    'youtube_url': youtube_url,
                                     'embed_url': f"https://www.youtube.com/embed/{video_id}?autoplay=1&controls=1&enablejsapi=1",
                                     'confidence': confidence,
                                     'search_query': query,

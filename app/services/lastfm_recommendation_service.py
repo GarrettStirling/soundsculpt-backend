@@ -24,7 +24,6 @@ class LastFMRecommendationService:
         """Add a progress message with timestamp"""
         timestamp = time.strftime("%H:%M:%S")
         self.progress_messages.append(f"[{timestamp}] {message}")
-        print(f"📊 {message}")  # Also print to console
     
     def get_spotify_album_cover(self, track_name: str, artist_name: str, access_token: str) -> str:
         """
@@ -32,13 +31,11 @@ class LastFMRecommendationService:
         """
         try:
             if not access_token:
-                print(f"No access token provided for album cover search")
                 return 'https://via.placeholder.com/300x300/333/fff?text=♪'
             
             # Search for the track on Spotify
             sp = self.spotify_service.create_spotify_client(access_token)
             search_query = f"track:{track_name} artist:{artist_name}"
-            print(f"🔍 Searching Spotify for album cover: {search_query}")
             
             results = sp.search(q=search_query, type='track', limit=1)
             
@@ -50,17 +47,11 @@ class LastFMRecommendationService:
                 if images:
                     # Return the medium-sized image (usually index 1)
                     cover_url = images[1]['url'] if len(images) > 1 else images[0]['url']
-                    print(f"✅ Found album cover for {track_name}: {cover_url}")
                     return cover_url
-                else:
-                    print(f"⚠️ No images found for {track_name} by {artist_name}")
-            else:
-                print(f"⚠️ No Spotify results found for {track_name} by {artist_name}")
             
             return 'https://via.placeholder.com/300x300/333/fff?text=♪'
             
         except Exception as e:
-            print(f"❌ Error getting Spotify album cover for {track_name} by {artist_name}: {e}")
             return 'https://via.placeholder.com/300x300/333/fff?text=♪'
     
     def get_spotify_track_data(self, track_name: str, artist_name: str, access_token: str) -> Dict:
@@ -95,7 +86,6 @@ class LastFMRecommendationService:
             return {'popularity': 50, 'album_cover': 'https://via.placeholder.com/300x300/333/fff?text=♪'}
             
         except Exception as e:
-            print(f"Error getting track data: {e}")
             return {'popularity': 50, 'album_cover': 'https://via.placeholder.com/300x300/333/fff?text=♪'}
     
     def get_popularity_group(self, popularity: int, user_preference: int) -> str:
@@ -250,10 +240,11 @@ class LastFMRecommendationService:
                     recommended_track_ids.add(track_id)
                     seen_artists.add(artist_name.lower())
             
+
             # Shuffle and limit results
             random.shuffle(all_recommendations)
             all_recommendations = all_recommendations[:n_recommendations]
-            
+
             elapsed_time = time.time() - start_time
             self.add_progress_message(f"Found {len(all_recommendations)} perfect recommendations for you!")
             if progress_callback:
@@ -660,10 +651,14 @@ class LastFMRecommendationService:
             print(f"Error in artist-based fallback: {e}")
             return {"error": f"Artist-based fallback failed: {str(e)}"}
     
-    def get_auto_discovery_recommendations(self, user_tracks: List[Dict], n_recommendations: int = 30, 
-                                         excluded_track_ids: Set[str] = None, access_token: str = None, 
-                                         depth: int = 3, popularity: int = 50, user_saved_tracks: Set[str] = None,
-                                         progress_callback: callable = None) -> Dict:
+    def get_auto_discovery_recommendations(self, 
+                                           user_tracks: List[Dict], 
+                                           n_recommendations: int = 30, 
+                                           excluded_track_ids: Set[str] = None, 
+                                           access_token: str = None, 
+                                           depth: int = 3, popularity: int = 50, 
+                                           user_saved_tracks: Set[str] = None,
+                                           progress_callback: callable = None) -> Dict:
         """
         Get auto discovery recommendations based on user's listening patterns using Last.fm
         """
@@ -696,6 +691,8 @@ class LastFMRecommendationService:
                 progress_callback("📊 Analyzing your music taste patterns...")
             # Analyze user's most played artists - use ALL tracks provided
             artist_counts = {}
+            
+            
             for track in user_tracks:  # Analyze ALL tracks provided
                 artist_name = track.get('artists', [{}])[0].get('name', '') if track.get('artists') else ''
                 if artist_name:
@@ -706,6 +703,7 @@ class LastFMRecommendationService:
             
             # Get top artists based on depth slider
             top_artists = sorted(artist_counts.items(), key=lambda x: x[1], reverse=True)[:depth]
+            
             
             self.add_progress_message(f"🔍 Finding similar artists to your top {len(top_artists)} favorites...")
             if progress_callback:
@@ -733,10 +731,9 @@ class LastFMRecommendationService:
                     break
                 
                 # Send progress update for each artist being processed
-                if i % 3 == 0:  # Update every 3rd artist to avoid spam
-                    self.add_progress_message(f"Discovering music similar to {artist_name}...")
-                    if progress_callback:
-                        progress_callback(f"Discovering music similar to {artist_name}...")
+                self.add_progress_message(f"Discovering music similar to {artist_name}...")
+                if progress_callback:
+                    progress_callback(f"Discovering music similar to {artist_name}...")
                 
                 # Get similar artists
                 similar_artists = self.lastfm_service.get_similar_artists(artist_name, limit=10)
@@ -821,8 +818,6 @@ class LastFMRecommendationService:
             # Limit to requested number of recommendations
             all_recommendations = all_recommendations[:n_recommendations]
             
-            # Log final count without showing individual track IDs
-            print(f"BACKEND SUMMARY: Found {len(all_recommendations)} songs after all recommendation calls")
             
             self.add_progress_message(f"Found {len(all_recommendations)} perfect recommendations for you!")
             if progress_callback:
@@ -840,5 +835,4 @@ class LastFMRecommendationService:
             }
             
         except Exception as e:
-            print(f"Error in Last.fm auto discovery: {e}")
             return {"error": f"Last.fm auto discovery failed: {str(e)}"}

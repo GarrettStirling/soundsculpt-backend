@@ -1,7 +1,3 @@
-"""
-BPM-Based Recommendations API - Replacement for the old recommendation system
-"""
-
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 import os
@@ -20,8 +16,8 @@ router = APIRouter(prefix="/recommendations", tags=["Music Recommendations"])
 # Pydantic models for request/response
 class ManualRecommendationRequest(BaseModel):
     seed_tracks: Optional[List[str]] = []  # Track IDs
-    seed_artists: Optional[List[str]] = []  # Artist IDs (not used in BPM approach)
-    seed_playlists: Optional[List[str]] = []  # Playlist IDs (not used in BPM approach)
+    seed_artists: Optional[List[str]] = []  # Artist IDs 
+    seed_playlists: Optional[List[str]] = []  # Playlist IDs 
     popularity: Optional[int] = 50  # 0-100 (used for filtering)
     n_recommendations: Optional[int] = 20
     excluded_track_ids: Optional[List[str]] = []  # Previously generated track IDs to exclude
@@ -106,231 +102,229 @@ async def get_collection_size(token: str = Query(..., description="Spotify acces
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
-@router.get("/search-based-discovery")
-async def get_search_based_recommendations(
-    token: str = Query(..., description="Spotify access token"),
-    n_recommendations: int = Query(30, ge=1, le=50, description="Number of songs to recommend"),
-    popularity: Optional[int] = Query(None, ge=0, le=100, description="Popularity preference (0=niche, 100=mainstream)"),
-    analysis_track_count: int = Query(1000, ge=50, le=5000, description="Number of recent tracks to analyze"),
-    generation_seed: int = Query(0, ge=0, description="Generation seed for variation (0=first generation, 1+=subsequent)"),
-    exclude_track_ids: Optional[str] = Query(None, description="Comma-separated list of track IDs to exclude from recommendations"),
-    depth: int = Query(3, ge=1, le=10, description="Depth of analysis (number of top artists to consider)"),
-    exclude_saved_tracks: bool = Query(False, description="Whether to exclude user's saved tracks from recommendations")
-):
-    """
-    Get BPM-based auto discovery recommendations
-    """
-    try:
-        print(f"Auto discovery endpoint called with generation seed: {generation_seed}")
-        
-        # Progress tracking
-        progress_messages = []
-        
-        def add_progress(message):
-            progress_messages.append(message)
-            print(f"📡 PROGRESS: {message}")
-        
-        add_progress("Fetching your recent tracks from Spotify...")
-        
-        # Parse excluded track IDs
-        excluded_ids = set()
-        if exclude_track_ids:
-            excluded_ids = set(exclude_track_ids.split(','))
-            print(f"Excluding {len(excluded_ids)} previously shown tracks")
-            print(f"Excluded track IDs: {list(excluded_ids)[:10]}...")  # Show first 10 for debugging
-        
-        # Build user preferences if provided
-        user_preferences = {}
-        if popularity is not None:
-            user_preferences['popularity'] = popularity
-        
-        if user_preferences:
-            print(f"User preferences: {user_preferences}")
-        
-        # Calculate actual user request vs total request (including pool extras)
-        actual_user_request = n_recommendations - 30 if n_recommendations > 30 else n_recommendations
-        pool_extras = n_recommendations - actual_user_request
-        print(f"Requesting {n_recommendations} total recommendations ({actual_user_request} for user + {pool_extras} for pool) (gen #{generation_seed + 1})")
+# @router.get("/search-based-discovery")
+# async def get_search_based_recommendations(
+#     token: str = Query(..., description="Spotify access token"),
+#     n_recommendations: int = Query(30, ge=1, le=50, description="Number of songs to recommend"),
+#     popularity: Optional[int] = Query(None, ge=0, le=100, description="Popularity preference (0=niche, 100=mainstream)"),
+#     analysis_track_count: int = Query(1000, ge=50, le=5000, description="Number of recent tracks to analyze"),
+#     generation_seed: int = Query(0, ge=0, description="Generation seed for variation (0=first generation, 1+=subsequent)"),
+#     exclude_track_ids: Optional[str] = Query(None, description="Comma-separated list of track IDs to exclude from recommendations"),
+#     depth: int = Query(3, ge=1, le=10, description="Depth of analysis (number of top artists to consider)"),
+#     exclude_saved_tracks: bool = Query(False, description="Whether to exclude user's saved tracks from recommendations")
+# ):
 
-        if not token or len(token) < 10:
-            raise HTTPException(status_code=400, detail="Invalid or missing access token")
-
-        # Use method-specific auto discovery
-        sp = spotify_service.create_spotify_client(token)
+#     try:
+#         print(f"Auto discovery endpoint called with generation seed: {generation_seed}")
         
-            # Get user's recent tracks for analysis - use the actual analysis_track_count
-        try:
-            user_tracks = []
+#         # Progress tracking
+#         progress_messages = []
+        
+#         def add_progress(message):
+#             progress_messages.append(message)
+#             print(f"📡 PROGRESS: {message}")
+        
+#         add_progress("Fetching your recent tracks from Spotify...")
+        
+#         # Parse excluded track IDs
+#         excluded_ids = set()
+#         if exclude_track_ids:
+#             excluded_ids = set(exclude_track_ids.split(','))
+#             print(f"Excluding {len(excluded_ids)} previously shown tracks")
+#             print(f"Excluded track IDs: {list(excluded_ids)[:10]}...")  # Show first 10 for debugging
+        
+#         # Build user preferences if provided
+#         user_preferences = {}
+#         if popularity is not None:
+#             user_preferences['popularity'] = popularity
+        
+#         if user_preferences:
+#             print(f"User preferences: {user_preferences}")
+        
+#         # Calculate actual user request vs total request (including pool extras)
+#         actual_user_request = n_recommendations - 30 if n_recommendations > 30 else n_recommendations
+#         pool_extras = n_recommendations - actual_user_request
+#         print(f"Requesting {n_recommendations} total recommendations ({actual_user_request} for user + {pool_extras} for pool) (gen #{generation_seed + 1})")
+
+#         if not token or len(token) < 10:
+#             raise HTTPException(status_code=400, detail="Invalid or missing access token")
+
+#         # Use method-specific auto discovery
+#         sp = spotify_service.create_spotify_client(token)
+        
+#             # Get user's recent tracks for analysis - use the actual analysis_track_count
+#         try:
+#             user_tracks = []
             
-            # Get recently played tracks - fetch multiple pages to reach analysis_track_count
-            limit = 50  # Spotify API max per request
-            after_timestamp = None  # Use timestamp for pagination
-            while len(user_tracks) < analysis_track_count:
-                recent_tracks = sp.current_user_recently_played(limit=limit, after=after_timestamp)
-                items = recent_tracks.get('items', [])
-                if not items:
-                    break
+#             # Get recently played tracks - fetch multiple pages to reach analysis_track_count
+#             limit = 50  # Spotify API max per request
+#             after_timestamp = None  # Use timestamp for pagination
+#             while len(user_tracks) < analysis_track_count:
+#                 recent_tracks = sp.current_user_recently_played(limit=limit, after=after_timestamp)
+#                 items = recent_tracks.get('items', [])
+#                 if not items:
+#                     break
                 
-                for item in items:
-                    if item.get('track') and len(user_tracks) < analysis_track_count:
-                        user_tracks.append(item['track'])
+#                 for item in items:
+#                     if item.get('track') and len(user_tracks) < analysis_track_count:
+#                         user_tracks.append(item['track'])
                 
-                # Use the timestamp of the last item for pagination
-                if items:
-                    after_timestamp = items[-1].get('played_at')
-                    if not after_timestamp:
-                        break
-                else:
-                    break
+#                 # Use the timestamp of the last item for pagination
+#                 if items:
+#                     after_timestamp = items[-1].get('played_at')
+#                     if not after_timestamp:
+#                         break
+#                 else:
+#                     break
                 
-                if len(user_tracks) >= 2000:  # Safety limit
-                    break
+#                 if len(user_tracks) >= 2000:  # Safety limit
+#                     break
             
-            # Get user's saved tracks if we need more data to reach analysis_track_count
-            if len(user_tracks) < analysis_track_count:
-                offset = 0
-                while len(user_tracks) < analysis_track_count:
-                    saved_tracks = sp.current_user_saved_tracks(limit=limit, offset=offset)
-                    items = saved_tracks.get('items', [])
-                    if not items:
-                        break
+#             # Get user's saved tracks if we need more data to reach analysis_track_count
+#             if len(user_tracks) < analysis_track_count:
+#                 offset = 0
+#                 while len(user_tracks) < analysis_track_count:
+#                     saved_tracks = sp.current_user_saved_tracks(limit=limit, offset=offset)
+#                     items = saved_tracks.get('items', [])
+#                     if not items:
+#                         break
                     
-                    for item in items:
-                        if item.get('track') and len(user_tracks) < analysis_track_count:
-                            user_tracks.append(item['track'])
+#                     for item in items:
+#                         if item.get('track') and len(user_tracks) < analysis_track_count:
+#                             user_tracks.append(item['track'])
                     
-                    offset += limit
-                    if offset >= 2000:  # Safety limit
-                        break
+#                     offset += limit
+#                     if offset >= 2000:  # Safety limit
+#                         break
             
-            # Analyzing user tracks for Last.fm-based recommendations
+#             # Analyzing user tracks for Last.fm-based recommendations
             
-            # Get user's saved tracks to filter them out - only if requested
-            user_saved_tracks = set()
-            if exclude_saved_tracks:
-                try:
-                    # Fetching user's saved tracks for filtering
-                    # Fetch ALL saved tracks (Spotify API max limit is 50)
-                    offset = 0
-                    limit = 50  # Spotify API maximum limit for saved tracks
-                    batch_count = 0
-                    while True:
-                        saved_tracks_response = sp.current_user_saved_tracks(limit=limit, offset=offset)
-                        items = saved_tracks_response.get('items', [])
-                        if not items:
-                            break
+#             # Get user's saved tracks to filter them out - only if requested
+#             user_saved_tracks = set()
+#             if exclude_saved_tracks:
+#                 try:
+#                     # Fetching user's saved tracks for filtering
+#                     # Fetch ALL saved tracks (Spotify API max limit is 50)
+#                     offset = 0
+#                     limit = 50  # Spotify API maximum limit for saved tracks
+#                     batch_count = 0
+#                     while True:
+#                         saved_tracks_response = sp.current_user_saved_tracks(limit=limit, offset=offset)
+#                         items = saved_tracks_response.get('items', [])
+#                         if not items:
+#                             break
                         
-                        for item in items:
-                            if item.get('track') and item['track'].get('id'):
-                                user_saved_tracks.add(item['track']['id'])
+#                         for item in items:
+#                             if item.get('track') and item['track'].get('id'):
+#                                 user_saved_tracks.add(item['track']['id'])
                         
-                        offset += limit
-                        batch_count += 1
+#                         offset += limit
+#                         batch_count += 1
                         
-                        # Progress update every 10 batches
-                        if batch_count % 10 == 0:
-                            pass  # Removed verbose progress message
+#                         # Progress update every 10 batches
+#                         if batch_count % 10 == 0:
+#                             pass  # Removed verbose progress message
                         
-                        # Safety check to prevent infinite loops
-                        if offset > 10000:  # Max 10,000 tracks
-                            break
+#                         # Safety check to prevent infinite loops
+#                         if offset > 10000:  # Max 10,000 tracks
+#                             break
                             
-                    # Found saved tracks to filter out
-                except Exception as e:
-                    print(f"Warning: Could not fetch saved tracks: {e}")
-            else:
-                # Skipping saved tracks filtering for faster processing
-                pass
+#                     # Found saved tracks to filter out
+#                 except Exception as e:
+#                     print(f"Warning: Could not fetch saved tracks: {e}")
+#             else:
+#                 # Skipping saved tracks filtering for faster processing
+#                 pass
             
-            # Use Last.fm recommendation method only
-            add_progress("Processing your music library and extracting artists...")
+#             # Use Last.fm recommendation method only
+#             add_progress("Processing your music library and extracting artists...")
             
-            # Apply seed selection logic for beginning/middle/end track selection
-            if generation_seed > 0 and len(user_tracks) > 100:
-                add_progress("Selecting diverse seed tracks from your library...")
+#             # Apply seed selection logic for beginning/middle/end track selection
+#             if generation_seed > 0 and len(user_tracks) > 100:
+#                 add_progress("Selecting diverse seed tracks from your library...")
                 
-                # Calculate offsets for beginning, middle, and end
-                total_tracks = len(user_tracks)
-                library_offset = (generation_seed * 200) % (total_tracks - 100)  # Vary starting point
-                artist_offset = (generation_seed * 50) % 20  # Vary artist selection
+#                 # Calculate offsets for beginning, middle, and end
+#                 total_tracks = len(user_tracks)
+#                 library_offset = (generation_seed * 200) % (total_tracks - 100)  # Vary starting point
+#                 artist_offset = (generation_seed * 50) % 20  # Vary artist selection
                 
-                # Select tracks from beginning, middle, and end
-                beginning_tracks = user_tracks[library_offset:library_offset + 50]
-                middle_start = total_tracks // 2 + (generation_seed % 100) - 50
-                middle_tracks = user_tracks[max(0, middle_start):max(0, middle_start) + 50]
-                end_start = max(0, total_tracks - 100 - (generation_seed % 50))
-                end_tracks = user_tracks[end_start:end_start + 50]
+#                 # Select tracks from beginning, middle, and end
+#                 beginning_tracks = user_tracks[library_offset:library_offset + 50]
+#                 middle_start = total_tracks // 2 + (generation_seed % 100) - 50
+#                 middle_tracks = user_tracks[max(0, middle_start):max(0, middle_start) + 50]
+#                 end_start = max(0, total_tracks - 100 - (generation_seed % 50))
+#                 end_tracks = user_tracks[end_start:end_start + 50]
                 
-                # Combine and shuffle for variety
-                import random
-                random.seed(generation_seed)
-                selected_tracks = beginning_tracks + middle_tracks + end_tracks
-                random.shuffle(selected_tracks)
+#                 # Combine and shuffle for variety
+#                 import random
+#                 random.seed(generation_seed)
+#                 selected_tracks = beginning_tracks + middle_tracks + end_tracks
+#                 random.shuffle(selected_tracks)
                 
-                # Use selected tracks instead of all tracks
-                user_tracks = selected_tracks[:analysis_track_count]
+#                 # Use selected tracks instead of all tracks
+#                 user_tracks = selected_tracks[:analysis_track_count]
                 
-                print(f"SEED SELECTION: Using {len(user_tracks)} tracks from generation seed {generation_seed}")
-                print(f"SEED SELECTION: Library offset: {library_offset}, Artist offset: {artist_offset}")
+#                 print(f"SEED SELECTION: Using {len(user_tracks)} tracks from generation seed {generation_seed}")
+#                 print(f"SEED SELECTION: Library offset: {library_offset}, Artist offset: {artist_offset}")
             
-            add_progress("Calling Last.fm recommendation API with your music...")
+#             add_progress("Calling Last.fm recommendation API with your music...")
             
-            result = lastfm_recommendation_service.get_auto_discovery_recommendations(
-                user_tracks=user_tracks,
-                n_recommendations=n_recommendations,
-                excluded_track_ids=excluded_ids,
-                access_token=token,
-                depth=depth,
-                popularity=popularity,
-                user_saved_tracks=user_saved_tracks
-            )
+#             result = lastfm_recommendation_service.get_auto_discovery_recommendations(
+#                 user_tracks=user_tracks,
+#                 n_recommendations=n_recommendations,
+#                 excluded_track_ids=excluded_ids,
+#                 access_token=token,
+#                 depth=depth,
+#                 popularity=popularity,
+#                 user_saved_tracks=user_saved_tracks
+#             )
             
-            add_progress("Sorting and filtering recommendations...")
+#             add_progress("Sorting and filtering recommendations...")
             
-        except Exception as e:
-            print(f"Error getting user tracks for Last.fm analysis: {e}")
-            raise HTTPException(status_code=500, detail=f"Failed to generate recommendations: {str(e)}")
+#         except Exception as e:
+#             print(f"Error getting user tracks for Last.fm analysis: {e}")
+#             raise HTTPException(status_code=500, detail=f"Failed to generate recommendations: {str(e)}")
 
-        if "error" in result:
-            print(f"Error from recommendation service: {result['error']}")
-            raise HTTPException(status_code=400, detail=result["error"])
+#         if "error" in result:
+#             print(f"Error from recommendation service: {result['error']}")
+#             raise HTTPException(status_code=400, detail=result["error"])
 
-        # Get the recommendations from result
-        recommendations = result.get('recommendations', [])
-        print(f"Successfully generated {len(recommendations)} recommendations")
-        print(f"BACKEND SUMMARY: Found {len(recommendations)} songs after all recommendation calls")
+#         # Get the recommendations from result
+#         recommendations = result.get('recommendations', [])
+#         print(f"Successfully generated {len(recommendations)} recommendations")
+#         print(f"BACKEND SUMMARY: Found {len(recommendations)} songs after all recommendation calls")
         
-        # Store extra recommendations for future batches
-        extra_recommendations = []
-        print(f"BACKEND DEBUG: Total recommendations: {len(recommendations)}, Requested: {n_recommendations}")
-        if len(recommendations) > n_recommendations:
-            extra_recommendations = recommendations[n_recommendations:]
+#         # Store extra recommendations for future batches
+#         extra_recommendations = []
+#         print(f"BACKEND DEBUG: Total recommendations: {len(recommendations)}, Requested: {n_recommendations}")
+#         if len(recommendations) > n_recommendations:
+#             extra_recommendations = recommendations[n_recommendations:]
             
-            # Randomize the pool for variety in each batch
-            import random
-            random.seed(generation_seed + 42)  # Different seed for pool randomization
-            random.shuffle(extra_recommendations)
+#             # Randomize the pool for variety in each batch
+#             import random
+#             random.seed(generation_seed + 42)  # Different seed for pool randomization
+#             random.shuffle(extra_recommendations)
             
-            print(f"BACKEND POOL: Adding {len(extra_recommendations)} randomized songs to recommendation pool")
-            add_progress(f"Caching {len(extra_recommendations)} extra recommendations for instant batches...")
-        else:
-            print(f"BACKEND POOL: No extra recommendations to cache (only {len(recommendations)} total, requested {n_recommendations})")
+#             print(f"BACKEND POOL: Adding {len(extra_recommendations)} randomized songs to recommendation pool")
+#             add_progress(f"Caching {len(extra_recommendations)} extra recommendations for instant batches...")
+#         else:
+#             print(f"BACKEND POOL: No extra recommendations to cache (only {len(recommendations)} total, requested {n_recommendations})")
         
-        add_progress("Complete! Recommendations ready for delivery...")
+#         add_progress("Complete! Recommendations ready for delivery...")
         
-        # Update result with pool information
-        result["extra_recommendations"] = extra_recommendations
-        result["progress_messages"] = progress_messages
+#         # Update result with pool information
+#         result["extra_recommendations"] = extra_recommendations
+#         result["progress_messages"] = progress_messages
         
-        return result
+#         return result
         
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Music discovery error: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         print(f"Music discovery error: {e}")
+#         import traceback
+#         traceback.print_exc()
+#         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @router.get("/search-based-discovery-stream")
 async def get_search_based_recommendations_stream(
@@ -368,45 +362,59 @@ async def get_search_based_recommendations_stream(
         # Create a queue for progress messages
         progress_queue = queue.Queue()
         
-        def progress_callback(message):
+        def progress_callback(message: str) -> None:
             progress_queue.put({"type": "progress", "message": message})
         
         def stream_generator():
             try:
+                # Send initial progress message
+                yield f"data: {json.dumps({'type': 'progress', 'message': 'Starting music discovery process...'})}\n\n"
+                
                 # Start recommendation generation in a separate thread
                 def generate_recommendations():
                     try:
-                        # Get user tracks for analysis
+                        # Get user tracks for analysis - using saved tracks instead of recently played
                         user_tracks = []
-                        offset = 0
+                        seen_track_ids = set()  # Prevent duplicates
                         limit = 50
+                        offset = 0
+                        
+                        # Add timing for performance profiling
+                        import time
+                        fetch_start_time = time.time()
                         
                         while len(user_tracks) < analysis_track_count:
                             try:
-                                # Get recently played tracks
-                                recent_tracks = sp.current_user_recently_played(limit=limit, after=offset)
-                                if not recent_tracks or not recent_tracks.get('items'):
+                                # Get saved tracks with proper offset pagination
+                                saved_tracks = sp.current_user_saved_tracks(limit=limit, offset=offset)
+                                if not saved_tracks or not saved_tracks.get('items'):
                                     break
                                 
-                                for item in recent_tracks['items']:
+                                for item in saved_tracks['items']:
                                     if len(user_tracks) >= analysis_track_count:
                                         break
                                     track = item['track']
-                                    if track and track.get('id'):
+                                    if track and track.get('id') and track['id'] not in seen_track_ids:
+                                        seen_track_ids.add(track['id'])
                                         user_tracks.append({
                                             'id': track['id'],
                                             'name': track['name'],
                                             'artists': [{'name': artist['name']} for artist in track.get('artists', [])],
-                                            'played_at': item.get('played_at')
+                                            'added_at': item.get('added_at')  # Use added_at instead of played_at
                                         })
                                 
                                 offset += limit
-                                if offset >= 2000:  # Safety limit
+                                if len(user_tracks) >= 2000:  # Safety limit
                                     break
                                     
                             except Exception as e:
-                                print(f"Error getting recent tracks: {e}")
                                 break
+                        
+                        fetch_end_time = time.time()
+                        fetch_duration = fetch_end_time - fetch_start_time
+                        
+                        # Update progress with track count
+                        progress_callback(f"Found {len(user_tracks)} saved tracks in your library")
                         
                         # Get user's saved tracks to filter them out - only if requested
                         user_saved_tracks = set()
@@ -433,22 +441,20 @@ async def get_search_based_recommendations_stream(
                                         break
                                         
                             except Exception as e:
-                                print(f"Warning: Could not fetch saved tracks: {e}")
+                                pass
                         else:
                             pass
                         
-                        # Send detailed progress messages
-                        progress_callback("Fetching your recent tracks from Spotify...")
-                        progress_callback("Processing your music library and extracting artists...")
                         
                         # Apply seed selection logic for beginning/middle/end track selection
                         if generation_seed > 0 and len(user_tracks) > 100:
-                            progress_callback("Selecting diverse seed tracks from your library...")
+                            progress_callback(f"Analyzing {len(user_tracks)} tracks...")
                             
                             # Calculate offsets for beginning, middle, and end
                             total_tracks = len(user_tracks)
                             library_offset = (generation_seed * 200) % (total_tracks - 100)  # Vary starting point
                             artist_offset = (generation_seed * 50) % 20  # Vary artist selection
+                            
                             
                             # Select tracks from beginning, middle, and end
                             beginning_tracks = user_tracks[library_offset:library_offset + 50]
@@ -456,6 +462,8 @@ async def get_search_based_recommendations_stream(
                             middle_tracks = user_tracks[max(0, middle_start):max(0, middle_start) + 50]
                             end_start = max(0, total_tracks - 100 - (generation_seed % 50))
                             end_tracks = user_tracks[end_start:end_start + 50]
+                            
+                            
                             
                             # Combine and shuffle for variety
                             import random
@@ -466,14 +474,14 @@ async def get_search_based_recommendations_stream(
                             # Use selected tracks instead of all tracks
                             user_tracks = selected_tracks[:analysis_track_count]
                             
-                            progress_callback(f"Selected {len(user_tracks)} diverse tracks from your library")
-                            print(f"SEED SELECTION: Using {len(user_tracks)} tracks from generation seed {generation_seed}")
-                            print(f"SEED SELECTION: Library offset: {library_offset}, Artist offset: {artist_offset}")
+                        else:
+                            progress_callback(f"Using all {len(user_tracks)} tracks for analysis...")
                         
                         progress_callback("Calling Last.fm recommendation API with your music...")
                         
-                        # Log the request details for debugging
-                        print(f"BACKEND REQUEST: Calling Last.fm service with n_recommendations={n_recommendations}")
+                        
+                        # Add timing for recommendation generation
+                        rec_start_time = time.time()
                         
                         # Use Last.fm recommendation method with progress callback
                         result = lastfm_recommendation_service.get_auto_discovery_recommendations(
@@ -487,10 +495,16 @@ async def get_search_based_recommendations_stream(
                             progress_callback=progress_callback
                         )
                         
+                        # Add timing for recommendation generation
+                        rec_end_time = time.time()
+                        rec_duration = rec_end_time - rec_start_time
+                        
                         progress_callback("Analyzing and filtering recommendations...")
                         
                         # Add pool logic and final progress message
                         recommendations = result.get('recommendations', [])
+                        progress_callback(f"Found {len(recommendations)} recommendations!")
+                        
                         if len(recommendations) > n_recommendations:
                             extra_recommendations = recommendations[n_recommendations:]
                             progress_callback(f"Caching {len(extra_recommendations)} extra recommendations for instant batches...")
@@ -503,6 +517,11 @@ async def get_search_based_recommendations_stream(
                         
                     except Exception as e:
                         progress_queue.put({"type": "error", "message": str(e)})
+                
+                # Send key progress messages immediately (before thread starts)
+                yield f"data: {json.dumps({'type': 'progress', 'message': 'Starting music discovery process...'})}\n\n"
+                yield f"data: {json.dumps({'type': 'progress', 'message': 'Fetching your saved tracks from Spotify...'})}\n\n"
+                yield f"data: {json.dumps({'type': 'progress', 'message': 'Analyzing your music library...'})}\n\n"
                 
                 # Start the recommendation generation in a separate thread
                 import threading
@@ -544,26 +563,14 @@ async def get_search_based_recommendations_stream(
         )
         
     except Exception as e:
-        print(f"Streaming auto discovery error: {e}")
-        import traceback
-        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @router.post("/manual-discovery")
 async def get_manual_recommendations(
     request: ManualRecommendationRequest
 ):
-    """
-    Get BPM-based recommendations for manually selected seed tracks
-    """
+
     try:
-        print(f"=== MANUAL DISCOVERY REQUEST RECEIVED ===")
-        print(f"Request data: {request}")
-        
-        print(f"=== LAST.FM MANUAL DISCOVERY ENDPOINT ===")
-        print(f"Seed tracks: {len(request.seed_tracks)}")
-        print(f"Requested recommendations: {request.n_recommendations}")
-        print(f"Token length: {len(request.token) if request.token else 0}")
         
         if not request.token or len(request.token) < 10:
             raise HTTPException(status_code=400, detail="Invalid or missing access token")
@@ -577,9 +584,7 @@ async def get_manual_recommendations(
         # Test authentication
         try:
             user_info = sp.me()
-            print(f"Creating Last.fm-based recommendations for user: {user_info.get('display_name', 'Unknown')}")
         except Exception as auth_error:
-            print(f"Authentication failed: {auth_error}")
             raise HTTPException(status_code=401, detail="Invalid or expired access token")
         
         # Get track information for all seed tracks
@@ -588,7 +593,6 @@ async def get_manual_recommendations(
             try:
                 seed_track_info = sp.track(seed_track_id)
                 if not seed_track_info:
-                    print(f"Warning: Could not find track with ID: {seed_track_id}")
                     continue
                 
                 seed_track_name = seed_track_info.get('name', '')
@@ -600,16 +604,13 @@ async def get_manual_recommendations(
                         'artist': seed_artist_name,
                         'id': seed_track_id
                     })
-                    print(f"Seed track {i+1}: '{seed_track_name}' by '{seed_artist_name}'")
                 
             except Exception as e:
-                print(f"Error getting seed track {i+1} info: {e}")
                 continue
         
         if not seed_tracks_info:
             raise HTTPException(status_code=400, detail="Could not retrieve any valid seed track information")
         
-        print(f"Using {len(seed_tracks_info)} seed tracks for recommendations")
         
         # Convert excluded track IDs to set
         excluded_ids = set(request.excluded_track_ids) if request.excluded_track_ids else set()
@@ -732,7 +733,6 @@ async def get_manual_recommendations_stream(
             try:
                 seed_track_info = sp.track(seed_track_id)
                 if not seed_track_info:
-                    print(f"Warning: Could not find track with ID: {seed_track_id}")
                     continue
                 
                 seed_track_name = seed_track_info.get('name', '')
@@ -744,16 +744,13 @@ async def get_manual_recommendations_stream(
                         'artist': seed_artist_name,
                         'id': seed_track_id
                     })
-                    print(f"Seed track {i+1}: '{seed_track_name}' by '{seed_artist_name}'")
                 
             except Exception as e:
-                print(f"Error getting seed track {i+1} info: {e}")
                 continue
         
         if not seed_tracks_info:
             raise HTTPException(status_code=400, detail="Could not retrieve any valid seed track information")
         
-        print(f"Using {len(seed_tracks_info)} seed tracks for recommendations")
         
         # Convert excluded track IDs to set
         excluded_ids = set(request.excluded_track_ids) if request.excluded_track_ids else set()
