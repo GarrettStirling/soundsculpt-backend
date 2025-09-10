@@ -490,8 +490,8 @@ class LastFMRecommendationService:
             # Get the user's most-played artists (based on depth slider setting)
             # These will be our "seed artists" to find similar music
             top_artists = sorted(artist_counts.items(), key=lambda x: x[1], reverse=True)[:depth]
-            
-            print(f"top artists: {top_artists}")
+
+            print(f"top artists: {top_artists[:10]}")
             
             # ============================================================================
             # STEP 4: SETUP FILTERING & EXCLUSION LISTS
@@ -532,12 +532,7 @@ class LastFMRecommendationService:
                 # ============================================================================
                 # Use Last.fm's similarity data to find artists that sound like the user's favorites
                 # This is the core of the recommendation algorithm
-                time_start = time.time()
                 similar_artists = self.lastfm_service.get_similar_artists(artist_name, limit=10)
-                time_end = time.time()
-                time_duration = round(time_end - time_start, 2)
-                print(f"total duration of getting similar artists to {artist_name}: {time_duration}")
-                print(f"total similar artists found: {len(similar_artists)}")
                 print(f"🔍 DEBUG: Similar artists for {artist_name}: {[artist.get('name', 'Unknown') for artist in similar_artists[:5]]}")
                 
                 # ============================================================================
@@ -553,14 +548,10 @@ class LastFMRecommendationService:
                     if not similar_artist_name or similar_artist_name.lower() in seen_artists:
                         continue
                     
-                    # Get tracks 3-4 from this similar artist (skip the most popular ones)
-                    time_start = time.time()
+                    # Get 2 tracks from this similar artist (skip the most popular ones)
                     all_tracks = self.lastfm_service.get_artist_top_tracks(similar_artist_name, limit=4)  # Get more tracks to ensure we have enough
-                    time_end = time.time()
-                    time_duration = round(time_end - time_start, 2)
-                    print(f"total duration of getting top tracks from {similar_artist_name}: {time_duration}")
-                    
-                    # if artist has at least 4 tracks, then take tracks 3-4 (index 2-4), if not, then take tracks 1-2 (index 0-2)
+
+                    # Grab 2 tracks from the artist - based on popularity preference
                     if len(all_tracks) >= 6:
                         if popularity > 75: # popular
                             top_tracks = all_tracks[0:2] 
@@ -607,14 +598,8 @@ class LastFMRecommendationService:
                         # ============================================================================
                         
                         # Get track data from Spotify (including popularity, album cover, preview URL)
-                        time_start = time.time()
                         spotify_data = self.get_spotify_track_data(track_name, similar_artist_name, access_token) if access_token else {'found': False, 'popularity': 50, 'album_cover': 'https://picsum.photos/300/300?random=1'}
-                        time_end = time.time()
-                        time_duration = round(time_end - time_start, 2)
-                        print(f"total duration of getting spotify data for {track_name} by {similar_artist_name}: {time_duration}")
-                        # print new line
-                        print("\n\n")
-                        
+
                         # Skip tracks that don't exist on Spotify
                         if not spotify_data.get('found', True):
                             continue
