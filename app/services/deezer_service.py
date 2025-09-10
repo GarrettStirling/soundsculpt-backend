@@ -84,6 +84,14 @@ class DeezerService:
                 normalized_title = self.normalize_string(title)
                 normalized_artist = self.normalize_string(artist)
                 
+                # Check for remix mismatch - if original doesn't have 'remix', don't match with remix
+                original_has_remix = 'remix' in normalized_track_name
+                deezer_has_remix = 'remix' in normalized_title
+                
+                if not original_has_remix and deezer_has_remix:
+                    logger.info(f"🚫 Skipping remix mismatch: Original '{track_name}' (no remix) vs Deezer '{title}' (has remix)")
+                    continue
+                
                 # Check if track name and artist match reasonably well
                 track_match = (normalized_track_name in normalized_title or 
                               normalized_title in normalized_track_name)
