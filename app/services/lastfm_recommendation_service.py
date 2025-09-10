@@ -31,7 +31,7 @@ class LastFMRecommendationService:
         """
         try:
             if not access_token:
-                return 'https://via.placeholder.com/300x300/333/fff?text=♪'
+                return 'https://picsum.photos/300/300?random=1'
             
             # Search for the track on Spotify
             sp = self.spotify_service.create_spotify_client(access_token)
@@ -49,16 +49,16 @@ class LastFMRecommendationService:
                     cover_url = images[1]['url'] if len(images) > 1 else images[0]['url']
                     return cover_url
             
-            return 'https://via.placeholder.com/300x300/333/fff?text=♪'
+            return 'https://picsum.photos/300/300?random=1'
             
         except Exception as e:
-            return 'https://via.placeholder.com/300x300/333/fff?text=♪'
+            return 'https://picsum.photos/300/300?random=1'
     
     def get_spotify_track_data(self, track_name: str, artist_name: str, access_token: str) -> Dict:
         """Get track data including popularity from Spotify search"""
         try:
             if not access_token:
-                return {'popularity': 50, 'album_cover': 'https://via.placeholder.com/300x300/333/fff?text=♪'}
+                return {'found': False, 'popularity': 50, 'album_cover': 'https://picsum.photos/300/300?random=1'}
             
             # Search for the track on Spotify
             sp = self.spotify_service.create_spotify_client(access_token)
@@ -71,11 +71,12 @@ class LastFMRecommendationService:
                 album = track.get('album', {})
                 images = album.get('images', [])
                 
-                album_cover = 'https://via.placeholder.com/300x300/333/fff?text=♪'
+                album_cover = 'https://picsum.photos/300/300?random=1'
                 if images:
                     album_cover = images[1]['url'] if len(images) > 1 else images[0]['url']
                 
                 return {
+                    'found': True,
                     'popularity': track.get('popularity', 50),
                     'album_cover': album_cover,
                     'duration_ms': track.get('duration_ms', 0),
@@ -83,10 +84,10 @@ class LastFMRecommendationService:
                     'external_url': track.get('external_urls', {}).get('spotify', f"https://open.spotify.com/search/{track_name}%20{artist_name}")
                 }
             
-            return {'popularity': 50, 'album_cover': 'https://via.placeholder.com/300x300/333/fff?text=♪'}
+            return {'found': False, 'popularity': 50, 'album_cover': 'https://picsum.photos/300/300?random=1'}
             
         except Exception as e:
-            return {'popularity': 50, 'album_cover': 'https://via.placeholder.com/300x300/333/fff?text=♪'}
+            return {'found': False, 'popularity': 50, 'album_cover': 'https://picsum.photos/300/300?random=1'}
     
     def get_popularity_group(self, popularity: int, user_preference: int) -> str:
         """Determine popularity group based on user preference and track popularity"""
@@ -172,7 +173,7 @@ class LastFMRecommendationService:
                     print(f"🔄 DEBUG: Trying similar artists as fallback for '{seed_track['name']}' by {seed_track['artist']}")
                     
                     # Fallback: try to get similar artists and their top tracks
-                    similar_artists = self.lastfm_service.get_similar_artists(seed_track['artist'], limit=10)
+                    similar_artists = self.lastfm_service.get_similar_artists(seed_track['artist'], limit=30)
                     print(f"🔍 DEBUG: Found {len(similar_artists)} similar artists as fallback")
                     
                     if not similar_artists:
@@ -226,7 +227,11 @@ class LastFMRecommendationService:
                                 continue
                             
                             # Get track data from Spotify
-                            spotify_data = self.get_spotify_track_data(track_name, similar_artist_name, access_token) if access_token else {'popularity': 50, 'album_cover': 'https://via.placeholder.com/300x300/333/fff?text=♪'}
+                            spotify_data = self.get_spotify_track_data(track_name, similar_artist_name, access_token) if access_token else {'found': False, 'popularity': 50, 'album_cover': 'https://picsum.photos/300/300?random=1'}
+                            
+                            # Skip tracks that don't exist on Spotify
+                            if not spotify_data.get('found', True):
+                                continue
                             
                             # Check popularity preference
                             popularity_group = self.get_popularity_group(spotify_data['popularity'], popularity)
@@ -251,7 +256,7 @@ class LastFMRecommendationService:
                             
                             all_recommendations.append(recommendation)
                             seen_artists.add(similar_artist_name.lower())
-                            break  # Only take one track per artist
+                            break  # Only take one track per artist for variety
                     
                     continue  # Skip the normal similar tracks processing
                 
@@ -259,7 +264,6 @@ class LastFMRecommendationService:
                 
                 # Process similar tracks (collect from all seeds first, then limit later)
                 for track in similar_tracks:
-                    
                     track_name = track.get('name', '')
                     artist_name = track.get('artist', {}).get('name', '') if isinstance(track.get('artist'), dict) else str(track.get('artist', ''))
                     
@@ -290,7 +294,11 @@ class LastFMRecommendationService:
                     similarity_score = float(track.get('match', 0)) if track.get('match') else 0.8
                     
                     # Get track data from Spotify (including popularity)
-                    spotify_data = self.get_spotify_track_data(track_name, artist_name, access_token) if access_token else {'popularity': 50, 'album_cover': 'https://via.placeholder.com/300x300/333/fff?text=♪'}
+                    spotify_data = self.get_spotify_track_data(track_name, artist_name, access_token) if access_token else {'found': False, 'popularity': 50, 'album_cover': 'https://picsum.photos/300/300?random=1'}
+                    
+                    # Skip tracks that don't exist on Spotify
+                    if not spotify_data.get('found', True):
+                        continue
                     
                     # Check if track matches user's popularity preference
                     popularity_group = self.get_popularity_group(spotify_data['popularity'], popularity)
@@ -362,7 +370,7 @@ class LastFMRecommendationService:
         except Exception as e:
             print(f"Error in multi-seed Last.fm recommendation service: {e}")
             return {"error": f"Failed to generate multi-seed Last.fm recommendations: {str(e)}"}
-
+    
     def _get_artist_based_recommendations(self, seed_artist_name: str, n_recommendations: int, excluded_track_ids: Set[str]) -> Dict:
         """
         Fallback method: get recommendations based on similar artists only
@@ -400,16 +408,23 @@ class LastFMRecommendationService:
                     if not track_name:
                         continue
                     
+                    # Check if track exists on Spotify before creating recommendation
+                    spotify_data = self.get_spotify_track_data(track_name, artist_name, access_token) if access_token else {'found': False, 'popularity': 50, 'album_cover': 'https://picsum.photos/300/300?random=1'}
+                    
+                    # Skip tracks that don't exist on Spotify
+                    if not spotify_data.get('found', True):
+                        continue
+                    
                     recommendation = {
                         'id': f"lastfm_{track.get('mbid', '')}" if track.get('mbid') else f"lastfm_{hash(track_name + artist_name)}",
                         'name': track_name,
                         'artist': artist_name,
                         'album': 'Unknown Album',
-                        'duration_ms': 0,
-                        'popularity': 50,
-                        'preview_url': None,
-                        'external_url': f"https://open.spotify.com/search/{track_name}%20{artist_name}",
-                        'images': [{'url': 'https://via.placeholder.com/300x300/333/fff?text=♪'}],
+                        'duration_ms': spotify_data.get('duration_ms', 0),
+                        'popularity': spotify_data['popularity'],
+                        'preview_url': spotify_data.get('preview_url'),
+                        'external_url': spotify_data.get('external_url', f"https://open.spotify.com/search/{track_name}%20{artist_name}"),
+                        'images': [{'url': spotify_data['album_cover']}],
                         'similarity_score': float(artist.get('match', 0)) if artist.get('match') else 0.6,
                         'source': 'lastfm_artist_fallback'
                     }
@@ -544,18 +559,18 @@ class LastFMRecommendationService:
                     time_end = time.time()
                     time_duration = round(time_end - time_start, 2)
                     print(f"total duration of getting top tracks from {similar_artist_name}: {time_duration}")
-                    print(f"total tracks found: {len(all_tracks)}")
                     
                     # if artist has at least 4 tracks, then take tracks 3-4 (index 2-4), if not, then take tracks 1-2 (index 0-2)
-                    if len(all_tracks) >= 4:
-                        top_tracks = all_tracks[2:4]  # Get 3rd and 4th most popular tracks
-                        print(f"✅ DEBUG: {similar_artist_name} has {len(all_tracks)} tracks, using tracks 3-4")
+                    if len(all_tracks) >= 6:
+                        if popularity > 75: # popular
+                            top_tracks = all_tracks[0:2] 
+                        elif popularity > 35: # balanced
+                            top_tracks = all_tracks[2:4]
+                        else: # underground
+                            top_tracks = all_tracks[4:6]
                     else:
                         top_tracks = all_tracks[0:2]  # Get 1st and 2nd most popular tracks
-                        print(f"⚠️ DEBUG: {similar_artist_name} only has {len(all_tracks)} tracks, using tracks 1-2")
-                    
-                    print(f"🔍 DEBUG: Selected {len(top_tracks)} tracks from {similar_artist_name}")
-                    
+                                        
                     # ============================================================================
                     # STEP 5C: PROCESS EACH TRACK WITH FILTERING & ENRICHMENT
                     # ============================================================================
@@ -590,15 +605,19 @@ class LastFMRecommendationService:
                         # ============================================================================
                         # STEP 5D: ENRICH WITH SPOTIFY DATA & APPLY POPULARITY FILTERS
                         # ============================================================================
-                       
+                        
                         # Get track data from Spotify (including popularity, album cover, preview URL)
                         time_start = time.time()
-                        spotify_data = self.get_spotify_track_data(track_name, similar_artist_name, access_token) if access_token else {'popularity': 50, 'album_cover': 'https://via.placeholder.com/300x300/333/fff?text=♪'}
+                        spotify_data = self.get_spotify_track_data(track_name, similar_artist_name, access_token) if access_token else {'found': False, 'popularity': 50, 'album_cover': 'https://picsum.photos/300/300?random=1'}
                         time_end = time.time()
                         time_duration = round(time_end - time_start, 2)
                         print(f"total duration of getting spotify data for {track_name} by {similar_artist_name}: {time_duration}")
                         # print new line
                         print("\n\n")
+                        
+                        # Skip tracks that don't exist on Spotify
+                        if not spotify_data.get('found', True):
+                            continue
                         
                         # Check if track matches user's popularity preference
                         popularity_group = self.get_popularity_group(spotify_data['popularity'], popularity)
@@ -640,21 +659,145 @@ class LastFMRecommendationService:
             random.shuffle(all_recommendations)
             print(f"total recommendations before filter: {len(all_recommendations)}")
             
+            # If we don't have enough recommendations, try expanding through similar artists of similar artists
+            if len(all_recommendations) < n_recommendations:
+                print(f"🔄 DEBUG: Only found {len(all_recommendations)} recommendations, expanding search depth...")
+                self.add_progress_message("Expanding search to find more recommendations...")
+                if progress_callback:
+                    progress_callback("Expanding search to find more recommendations...")
+                
+                # Get all artists we've already used
+                used_artists = set()
+                for rec in all_recommendations:
+                    used_artists.add(rec['artist'].lower())
+                
+                # Add seed artists to used list
+                for seed_track in seed_tracks:
+                    used_artists.add(seed_track['artist'].lower())
+                
+                # Try to find similar artists of similar artists (depth expansion)
+                expansion_artists = []
+                for seed_track in seed_tracks:
+                    # Get similar artists for the seed
+                    similar_artists = self.lastfm_service.get_similar_artists(seed_track['artist'], limit=20)
+                    for similar_artist in similar_artists:
+                        similar_artist_name = similar_artist.get('name', '')
+                        if similar_artist_name and similar_artist_name.lower() not in used_artists:
+                            # Get similar artists of this similar artist (depth 2)
+                            depth2_artists = self.lastfm_service.get_similar_artists(similar_artist_name, limit=10)
+                            for depth2_artist in depth2_artists:
+                                depth2_name = depth2_artist.get('name', '')
+                                if depth2_name and depth2_name.lower() not in used_artists:
+                                    expansion_artists.append(depth2_name)
+                                    used_artists.add(depth2_name.lower())
+                
+                print(f"🔍 DEBUG: Found {len(expansion_artists)} expansion artists")
+                
+                # Process expansion artists
+                for expansion_artist in expansion_artists:
+                    if len(all_recommendations) >= n_recommendations:
+                        break
+                    
+                    print(f"🔍 DEBUG: Processing expansion artist: {expansion_artist}")
+                    
+                    # Get top tracks from this expansion artist
+                    all_tracks = self.lastfm_service.get_artist_top_tracks(expansion_artist, limit=4)
+                    
+                    if len(all_tracks) >= 4:
+                        top_tracks = all_tracks[2:4]  # Get 3rd and 4th most popular tracks
+                    else:
+                        top_tracks = all_tracks[0:2]  # Get 1st and 2nd most popular tracks
+                    
+                    # Process these tracks
+                    for track in top_tracks:
+                        if len(all_recommendations) >= n_recommendations:
+                            break
+                        
+                        track_name = track.get('name', '')
+                        if not track_name:
+                            continue
+                        
+                        # Filter out Live and Commentary versions
+                        track_name_lower = track_name.lower()
+                        if ('live' in track_name_lower or 'commentary' in track_name_lower or 
+                            '(live' in track_name_lower or '(commentary' in track_name_lower or
+                            '[live' in track_name_lower or '[commentary' in track_name_lower):
+                            continue
+                        
+                        # Generate consistent track ID
+                        if track.get('mbid'):
+                            track_id = f"lastfm_{track.get('mbid')}"
+                        else:
+                            normalized_str = f"{track_name.lower().strip()}|{expansion_artist.lower().strip()}"
+                            track_id = f"lastfm_{hash(normalized_str)}"
+                        
+                        # Skip if already excluded
+                        if track_id in all_excluded_tracks:
+                            continue
+                        
+                        # Get track data from Spotify
+                        spotify_data = self.get_spotify_track_data(track_name, expansion_artist, access_token) if access_token else {'found': False, 'popularity': 50, 'album_cover': 'https://picsum.photos/300/300?random=1'}
+                        
+                        # Skip tracks that don't exist on Spotify
+                        if not spotify_data.get('found', True):
+                            continue
+                        
+                        # Check popularity preference
+                        popularity_group = self.get_popularity_group(spotify_data['popularity'], popularity)
+                        if popularity_group == "underground" and popularity > 66:
+                            continue
+                        elif popularity_group == "popular" and popularity < 34:
+                            continue
+                        
+                        # Create recommendation
+                        recommendation = {
+                            'id': track_id,
+                            'name': track_name,
+                            'artist': expansion_artist,
+                            'album': 'Unknown Album',
+                            'duration_ms': spotify_data.get('duration_ms', 0),
+                            'popularity': spotify_data['popularity'],
+                            'preview_url': spotify_data.get('preview_url'),
+                            'external_url': spotify_data.get('external_url', f"https://open.spotify.com/search/{track_name}%20{expansion_artist}"),
+                            'album_cover': spotify_data['album_cover'],
+                            'seed_track': f"{seed_track['name']} by {seed_track['artist']} (expanded)"
+                        }
+                        
+                        all_recommendations.append(recommendation)
+                        break  # Only take one track per artist
+            
             # Limit to requested number of recommendations
             all_recommendations = all_recommendations[:n_recommendations]
             print(f"total recommendations after filter: {len(all_recommendations)}")
+            
+            # Final shuffle to ensure proper mixing of all recommendation sources
+            random.shuffle(all_recommendations)
+            print(f"🎲 Final shuffle completed: {len(all_recommendations)} recommendations ready")
+            
+            # Add message if we still don't have enough recommendations
+            if len(all_recommendations) < n_recommendations:
+                exhaustion_message = f"⚠️ Found {len(all_recommendations)} recommendations (requested {n_recommendations}). Try adding more seed tracks or artists for better results."
+                self.add_progress_message(exhaustion_message)
+                print(f"⚠️ {exhaustion_message}")
+            
+            # Check if we have zero recommendations and add special message
+            if len(all_recommendations) == 0:
+                no_recommendations_message = "No more recommendations found for your current seed music. Please enter new music for new recommendations!"
+                self.add_progress_message(no_recommendations_message)
+                print(f"INFO: {no_recommendations_message}")
             
             # Return the final recommendation results with metadata
             return {
                 'recommendations': all_recommendations,
                 'seed_track': {
-                    'name': 'User Profile',
-                    'artist': 'Auto Discovery'
+                    'name': 'Manual Discovery',
+                    'artist': 'User Selected'
                 },
                 'generation_time': 0,
-                'method': 'lastfm_auto_discovery',
-                'progress_messages': self.progress_messages
+                'method': 'lastfm_manual_discovery',
+                'progress_messages': self.progress_messages,
+                'no_more_recommendations': len(all_recommendations) == 0
             }
             
         except Exception as e:
-            return {"error": f"Last.fm auto discovery failed: {str(e)}"}
+            return {"error": f"Last.fm manual discovery failed: {str(e)}"}
