@@ -366,9 +366,3 @@ class YouTubeService:
         except:
             return True  # If we can't parse, assume it's reasonable
     
-    def get_audio_stream_url(self, video_id: str) -> Optional[str]:
-        """
-        This would require a separate service like youtube-dl or pytube
-        For now, we'll use the embed URL which YouTube handles
-        """
-        return f"https://www.youtube.com/embed/{video_id}?autoplay=1&controls=1&enablejsapi=1"

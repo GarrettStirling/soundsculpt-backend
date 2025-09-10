@@ -177,31 +177,3 @@ class LastFMService:
             print(f"Error getting top tracks for tag {tag_name}: {e}")
             return []
     
-    def search_track(self, track_name: str, artist_name: str) -> Optional[Dict]:
-        """
-        Search for a track to get Last.fm data
-        """
-        try:
-            params = {
-                'track': track_name,
-                'artist': artist_name,
-                'limit': 1
-            }
-            
-            data = self._make_request('track.search', params)
-            if not data or 'results' not in data:
-                return None
-            
-            results = data['results']
-            if 'trackmatches' in results and 'track' in results['trackmatches']:
-                tracks = results['trackmatches']['track']
-                if isinstance(tracks, list) and len(tracks) > 0:
-                    return tracks[0]
-                elif isinstance(tracks, dict):
-                    return tracks
-            
-            return None
-            
-        except Exception as e:
-            print(f"Error searching for track {track_name} by {artist_name}: {e}")
-            return None

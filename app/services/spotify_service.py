@@ -47,13 +47,6 @@ class SpotifyService:
         """Create authenticated Spotify client"""
         return spotipy.Spotify(auth=access_token)
     
-    def create_client_credentials_client(self) -> spotipy.Spotify:
-        """Create Spotify client using Client Credentials flow (no user auth needed)"""
-        client_credentials_manager = SpotifyClientCredentials(
-            client_id=self.client_id,
-            client_secret=self.client_secret
-        )
-        return spotipy.Spotify(client_credentials_manager=client_credentials_manager)
     
     def get_user_profile(self, sp: spotipy.Spotify) -> Dict:
         """Get user's basic profile information"""
@@ -63,14 +56,6 @@ class SpotifyService:
             print(f"Error getting user profile: {e}")
             return {}
     
-    def get_user_top_tracks(self, sp: spotipy.Spotify, limit: int = 50, time_range: str = "medium_term") -> List[Dict]:
-        """Get user's top tracks"""
-        try:
-            results = sp.current_user_top_tracks(limit=limit, time_range=time_range)
-            return results['items']
-        except Exception as e:
-            print(f"Error getting top tracks: {e}")
-            return []
     
     def get_user_playlists(self, sp: spotipy.Spotify) -> List[Dict]:
         """Get user's playlists"""
@@ -106,20 +91,6 @@ class SpotifyService:
             print(f"Error getting playlist tracks: {e}")
             return []
     
-    def get_audio_features(self, sp: spotipy.Spotify, track_ids: List[str]) -> List[Dict]:
-        """Get audio features for a list of tracks"""
-        try:
-            # Spotify API allows max 100 tracks per request
-            all_features = []
-            for i in range(0, len(track_ids), 100):
-                batch = track_ids[i:i+100]
-                features = sp.audio_features(batch)
-                all_features.extend([f for f in features if f])  # Filter out None values
-            
-            return all_features
-        except Exception as e:
-            print(f"Error getting audio features: {e}")
-            return []
     
     def get_recently_played(self, sp: spotipy.Spotify, limit: int = 50) -> List[Dict]:
         """Get user's recently played tracks"""
@@ -130,14 +101,6 @@ class SpotifyService:
             print(f"Error getting recently played: {e}")
             return []
     
-    def search_tracks(self, sp: spotipy.Spotify, query: str, limit: int = 20) -> List[Dict]:
-        """Search for tracks"""
-        try:
-            results = sp.search(q=query, type='track', limit=limit)
-            return results['tracks']['items']
-        except Exception as e:
-            print(f"Error searching tracks: {e}")
-            return []
     
     def create_playlist(self, sp: spotipy.Spotify, name: str, description: str = "", public: bool = False) -> Optional[Dict]:
         """Create a new playlist for the user"""
