@@ -22,7 +22,7 @@ app = FastAPI(
 # Add CORS middleware (for frontend communication)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:5174"],  # Vite dev server (React frontend)
+    allow_origins=["http://localhost:5173", "http://localhost:5174", "http://127.0.0.1:5173", "http://127.0.0.1:5174"],  # Vite dev server (React frontend)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -34,14 +34,11 @@ app.include_router(spotify_data.router)
 app.include_router(recommendations_lastfm.router)
 app.include_router(youtube.router)
 
-# Add request logging middleware
+# Add request logging middleware (simplified)
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start_time = time.time()
-    print(f"REQUEST: {request.method} {request.url}")
-    print(f"Headers: {dict(request.headers)}")
-    if request.query_params:
-        print(f"Query Params: {dict(request.query_params)}")
+    print(f"REQUEST: {request.method} {request.url.path}")
     response = await call_next(request)
     process_time = time.time() - start_time
     print(f"RESPONSE: {response.status_code} ({process_time:.2f}s)")

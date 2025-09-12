@@ -54,20 +54,58 @@ class LastFMRecommendationService:
         except Exception as e:
             return 'https://picsum.photos/300/300?random=1'
     
-    def get_spotify_track_data(self, track_name: str, artist_name: str, access_token: str) -> Dict:
-        """Get track data including popularity from Spotify search"""
+    def get_spotify_track_data(self, track_name: str, artist_name: str, access_token: str, excluded_track_ids: Set[str] = None) -> Dict:
+        """Get track data including popularity from Spotify search, with smart matching for exclusion"""
         try:
             if not access_token:
-                return {'found': False, 'popularity': 50, 'album_cover': 'https://picsum.photos/300/300?random=1'}
+                return {'found': False, 'spotify_id': None, 'popularity': 50, 'album_cover': 'https://picsum.photos/300/300?random=1'}
             
-            # Search for the track on Spotify
             sp = self.spotify_service.create_spotify_client(access_token)
-            search_query = f"track:{track_name} artist:{artist_name}"
             
-            results = sp.search(q=search_query, type='track', limit=1)
+            # Try multiple search strategies to find the best match
+            search_queries = [
+                f"track:{track_name} artist:{artist_name}",
+                f'"{track_name}" "{artist_name}"',
+                f"{track_name} {artist_name}",
+                f"track:{track_name} {artist_name}"
+            ]
             
-            if results and results.get('tracks', {}).get('items'):
-                track = results['tracks']['items'][0]
+            best_match = None
+            best_score = 0
+            
+            for search_query in search_queries:
+                try:
+                    results = sp.search(q=search_query, type='track', limit=10)  # Get more results to find best match
+                    
+                    if results and results.get('tracks', {}).get('items'):
+                        for track in results['tracks']['items']:
+                            # Calculate match score based on name and artist similarity
+                            track_name_match = track_name.lower() in track.get('name', '').lower()
+                            artist_match = any(artist_name.lower() in artist.get('name', '').lower() 
+                                             for artist in track.get('artists', []))
+                            
+                            if track_name_match and artist_match:
+                                # Prefer tracks that are in the user's saved tracks (for better exclusion matching)
+                                track_id = track.get('id')
+                                is_saved = track_id in excluded_track_ids if excluded_track_ids else False
+                                
+                                score = 100 if is_saved else 50  # Higher score for saved tracks
+                                
+                                if score > best_score:
+                                    best_score = score
+                                    best_match = track
+                                    
+                                    # Only log for specific tracks we're investigating
+                                    if track_name == 'Some Feeling' and artist_name == 'Mild Orange':
+                                        print(f"BEST MATCH: '{track.get('name')}' by {[artist.get('name') for artist in track.get('artists', [])]}")
+                                        print(f"  Spotify ID: {track_id}, Album: '{track.get('album', {}).get('name', 'Unknown')}'")
+                                        print(f"  Is saved version: {is_saved}")
+                                            
+                except Exception as e:
+                    continue
+            
+            if best_match:
+                track = best_match
                 album = track.get('album', {})
                 images = album.get('images', [])
                 
@@ -75,8 +113,11 @@ class LastFMRecommendationService:
                 if images:
                     album_cover = images[1]['url'] if len(images) > 1 else images[0]['url']
                 
+                spotify_id = track.get('id')
+                
                 return {
                     'found': True,
+                    'spotify_id': spotify_id,
                     'popularity': track.get('popularity', 50),
                     'album_cover': album_cover,
                     'duration_ms': track.get('duration_ms', 0),
@@ -84,11 +125,89 @@ class LastFMRecommendationService:
                     'external_url': track.get('external_urls', {}).get('spotify', f"https://open.spotify.com/search/{track_name}%20{artist_name}")
                 }
             
-            return {'found': False, 'popularity': 50, 'album_cover': 'https://picsum.photos/300/300?random=1'}
+            return {'found': False, 'spotify_id': None, 'popularity': 50, 'album_cover': 'https://picsum.photos/300/300?random=1'}
             
         except Exception as e:
-            return {'found': False, 'popularity': 50, 'album_cover': 'https://picsum.photos/300/300?random=1'}
+            return {'found': False, 'spotify_id': None, 'popularity': 50, 'album_cover': 'https://picsum.photos/300/300?random=1'}
     
+    def should_exclude_track_hybrid(self, track_name: str, artist_name: str, spotify_id: str, excluded_tracks: Set[str], excluded_track_data: List[Dict] = None) -> tuple:
+        """
+        Hybrid exclusion method: Check exact ID match first, then fallback to name+artist matching
+        Returns: (should_exclude: bool, match_type: str, timing_info: dict)
+        """
+        try:
+            import time
+            start_time = time.time()
+        
+            # Method 1: Exact Spotify ID match (fastest)
+            id_check_start = time.time()
+            if spotify_id and spotify_id in excluded_tracks:
+                id_check_time = time.time() - id_check_start
+                total_time = time.time() - start_time
+                return True, "exact_id", {"id_check_ms": round(id_check_time * 1000, 2), "total_ms": round(total_time * 1000, 2)}
+            id_check_time = time.time() - id_check_start
+            
+            # Method 2: Name + Artist matching (if we have track data)
+            if excluded_track_data:
+                name_check_start = time.time()
+                track_name_lower = track_name.lower().strip()
+                artist_name_lower = artist_name.lower().strip()
+                
+                for excluded_track in excluded_track_data:
+                    excluded_name = excluded_track.get('name', '').lower().strip()
+                    excluded_artist = excluded_track.get('artist', '').lower().strip()
+                    
+                    # Exact match
+                    if excluded_name == track_name_lower and excluded_artist == artist_name_lower:
+                        name_check_time = time.time() - name_check_start
+                        total_time = time.time() - start_time
+                        return True, "exact_name_artist", {
+                            "id_check_ms": round(id_check_time * 1000, 2),
+                            "name_check_ms": round(name_check_time * 1000, 2),
+                            "total_ms": round(total_time * 1000, 2)
+                        }
+                    
+                    # Fuzzy match (handle common variations)
+                    if (self._fuzzy_match(excluded_name, track_name_lower) and 
+                        self._fuzzy_match(excluded_artist, artist_name_lower)):
+                        name_check_time = time.time() - name_check_start
+                        total_time = time.time() - start_time
+                        return True, "fuzzy_name_artist", {
+                            "id_check_ms": round(id_check_time * 1000, 2),
+                            "name_check_ms": round(name_check_time * 1000, 2),
+                            "total_ms": round(total_time * 1000, 2)
+                        }
+                
+                name_check_time = time.time() - name_check_start
+            else:
+                name_check_time = 0
+            
+            total_time = time.time() - start_time
+            return False, "no_match", {
+                "id_check_ms": round(id_check_time * 1000, 2),
+                "name_check_ms": round(name_check_time * 1000, 2),
+                "total_ms": round(total_time * 1000, 2)
+            }
+        except Exception as e:
+            print(f"ERROR in should_exclude_track_hybrid: {e}")
+            import traceback
+            traceback.print_exc()
+            return False, "error", {"error": str(e), "total_ms": 0}
+    
+    def _fuzzy_match(self, str1: str, str2: str) -> bool:
+        """Simple fuzzy matching for track/artist names - more strict to avoid false positives"""
+        # Remove common suffixes and prefixes
+        clean1 = str1.replace('(feat.', '').replace('(ft.', '').replace('featuring', '').replace('feat', '').strip()
+        clean2 = str2.replace('(feat.', '').replace('(ft.', '').replace('featuring', '').replace('feat', '').strip()
+        
+        # Remove punctuation and extra spaces
+        import re
+        clean1 = re.sub(r'[^\w\s]', '', clean1).strip()
+        clean2 = re.sub(r'[^\w\s]', '', clean2).strip()
+        
+        # Only exact match after cleaning - no partial matches to avoid false positives
+        return clean1 == clean2
+
     def get_popularity_group(self, popularity: int, user_preference: int) -> str:
         """Determine popularity group based on user preference and track popularity"""
         # Define thresholds based on user preference
@@ -111,7 +230,7 @@ class LastFMRecommendationService:
                                          seed_tracks: List[Dict], 
                                          n_recommendations: int = 20, 
                                          excluded_track_ids: Set[str] = None, 
-                                         user_saved_tracks: Set[str] = None, 
+                                         user_saved_tracks: List[Dict] = None, 
                                          access_token: str = None,
                                          popularity: int = 50,
                                          depth: int = 3,
@@ -155,7 +274,7 @@ class LastFMRecommendationService:
             
             # Create a combined exclusion set for easier filtering
             excluded_ids = excluded_track_ids or set()
-            all_excluded_tracks = excluded_ids.union(user_saved_tracks) if user_saved_tracks else excluded_ids
+            all_excluded_tracks = excluded_ids
             
             # Process each seed track
             for i, seed_track in enumerate(seed_tracks):
@@ -222,15 +341,37 @@ class LastFMRecommendationService:
                                 normalized_str = f"{track_name.lower().strip()}|{similar_artist_name.lower().strip()}"
                                 track_id = f"lastfm_{hash(normalized_str)}"
                             
-                            # Skip if already excluded
-                            if track_id in all_excluded_tracks:
-                                continue
-                            
-                            # Get track data from Spotify
-                            spotify_data = self.get_spotify_track_data(track_name, similar_artist_name, access_token) if access_token else {'found': False, 'popularity': 50, 'album_cover': 'https://picsum.photos/300/300?random=1'}
+                            # Get track data from Spotify first to get the actual Spotify track ID
+                            spotify_data = self.get_spotify_track_data(track_name, similar_artist_name, access_token, all_excluded_tracks) if access_token else {'found': False, 'spotify_id': None, 'popularity': 50, 'album_cover': 'https://picsum.photos/300/300?random=1'}
                             
                             # Skip tracks that don't exist on Spotify
                             if not spotify_data.get('found', True):
+                                continue
+                            
+                            # Get the actual Spotify track ID for exclusion checking
+                            spotify_track_id = spotify_data.get('spotify_id')
+                            if not spotify_track_id:
+                                # Fallback: try to extract from external_url
+                                external_url = spotify_data.get('external_url', '')
+                                if '/track/' in external_url:
+                                    spotify_track_id = external_url.split('/track/')[-1].split('?')[0]
+                            
+                            # Simple exact name + artist matching for exclusion
+                            track_name_lower = track_name.lower().strip()
+                            artist_name_lower = similar_artist_name.lower().strip()
+                            
+                            # Check if this track is in the exclusion list by name + artist
+                            is_excluded = False
+                            for excluded_track in excluded_track_data:
+                                excluded_name = excluded_track.get('name', '').lower().strip()
+                                excluded_artist = excluded_track.get('artist', '').lower().strip()
+                                
+                                if excluded_name == track_name_lower and excluded_artist == artist_name_lower:
+                                    print(f"EXCLUDED {track_name} by {similar_artist_name} - exact name+artist match")
+                                    is_excluded = True
+                                    break
+                            
+                            if is_excluded:
                                 continue
                             
                             # Check popularity preference
@@ -294,10 +435,22 @@ class LastFMRecommendationService:
                     similarity_score = float(track.get('match', 0)) if track.get('match') else 0.8
                     
                     # Get track data from Spotify (including popularity)
-                    spotify_data = self.get_spotify_track_data(track_name, artist_name, access_token) if access_token else {'found': False, 'popularity': 50, 'album_cover': 'https://picsum.photos/300/300?random=1'}
+                    spotify_data = self.get_spotify_track_data(track_name, artist_name, access_token, all_excluded_tracks) if access_token else {'found': False, 'spotify_id': None, 'popularity': 50, 'album_cover': 'https://picsum.photos/300/300?random=1'}
                     
                     # Skip tracks that don't exist on Spotify
                     if not spotify_data.get('found', True):
+                        continue
+                    
+                    # Get the actual Spotify track ID for exclusion checking
+                    spotify_track_id = spotify_data.get('spotify_id')
+                    if not spotify_track_id:
+                        # Fallback: try to extract from external_url
+                        external_url = spotify_data.get('external_url', '')
+                        if '/track/' in external_url:
+                            spotify_track_id = external_url.split('/track/')[-1].split('?')[0]
+                    
+                    # Skip if already excluded (check both Last.fm ID and Spotify ID)
+                    if track_id in all_excluded_tracks or (spotify_track_id and spotify_track_id in all_excluded_tracks):
                         continue
                     
                     # Check if track matches user's popularity preference
@@ -409,10 +562,22 @@ class LastFMRecommendationService:
                         continue
                     
                     # Check if track exists on Spotify before creating recommendation
-                    spotify_data = self.get_spotify_track_data(track_name, artist_name, access_token) if access_token else {'found': False, 'popularity': 50, 'album_cover': 'https://picsum.photos/300/300?random=1'}
+                    spotify_data = self.get_spotify_track_data(track_name, artist_name, access_token, all_excluded_tracks) if access_token else {'found': False, 'spotify_id': None, 'popularity': 50, 'album_cover': 'https://picsum.photos/300/300?random=1'}
                     
                     # Skip tracks that don't exist on Spotify
                     if not spotify_data.get('found', True):
+                        continue
+                    
+                    # Get the actual Spotify track ID for exclusion checking
+                    spotify_track_id = spotify_data.get('spotify_id')
+                    if not spotify_track_id:
+                        # Fallback: try to extract from external_url
+                        external_url = spotify_data.get('external_url', '')
+                        if '/track/' in external_url:
+                            spotify_track_id = external_url.split('/track/')[-1].split('?')[0]
+                    
+                    # Skip if already excluded (check Spotify ID)
+                    if spotify_track_id and spotify_track_id in all_excluded_tracks:
                         continue
                     
                     recommendation = {
@@ -447,14 +612,161 @@ class LastFMRecommendationService:
             print(f"Error in artist-based fallback: {e}")
             return {"error": f"Artist-based fallback failed: {str(e)}"}
     
+    def _process_artists_parallel(self, top_artists, all_excluded_tracks, excluded_track_data, 
+                                 seen_artists, n_recommendations, popularity, access_token, progress_callback):
+        """Process artists in parallel for faster recommendations"""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import threading
+        
+        all_recommendations = []
+        recommendations_lock = threading.Lock()
+        seen_artists_lock = threading.Lock()
+        
+        def process_artist(artist_data):
+            """Process a single artist and return recommendations"""
+            artist_name, count = artist_data
+            artist_recommendations = []
+            
+            try:
+                # Send progress update
+                if progress_callback:
+                    progress_callback(f"Discovering music similar to {artist_name}...")
+                
+                # Find similar artists
+                similar_artists = self.lastfm_service.get_similar_artists(artist_name, limit=10)
+                print(f"🔍 DEBUG: Similar artists for {artist_name}: {[artist.get('name', 'Unknown') for artist in similar_artists[:5]]}")
+                
+                # Process each similar artist
+                for similar_artist in similar_artists:
+                    similar_artist_name = similar_artist.get('name', '')
+                    if not similar_artist_name:
+                        continue
+                    
+                    # Check if we've already seen this artist (thread-safe)
+                    with seen_artists_lock:
+                        if similar_artist_name.lower() in seen_artists:
+                            continue
+                        seen_artists.add(similar_artist_name.lower())
+                    
+                    # Get tracks from this similar artist
+                    all_tracks = self.lastfm_service.get_artist_top_tracks(similar_artist_name, limit=4)
+                    
+                    # Select tracks based on popularity preference
+                    if len(all_tracks) >= 6:
+                        if popularity > 75: # popular
+                            top_tracks = all_tracks[0:2] 
+                        elif popularity > 35: # balanced
+                            top_tracks = all_tracks[2:4]
+                        else: # underground
+                            top_tracks = all_tracks[4:6]
+                    else:
+                        top_tracks = all_tracks[0:2]
+                    
+                    # Process each track
+                    for track in top_tracks:
+                        track_name = track.get('name', '')
+                        if not track_name:
+                            continue
+                        
+                        # Filter out Live and Commentary versions
+                        track_name_lower = track_name.lower()
+                        if ('live' in track_name_lower or 'commentary' in track_name_lower or 
+                            '(live' in track_name_lower or '(commentary' in track_name_lower or
+                            '[live' in track_name_lower or '[commentary' in track_name_lower):
+                            continue
+                        
+                        # Generate track ID
+                        if track.get('mbid'):
+                            track_id = f"lastfm_{track.get('mbid')}"
+                        else:
+                            normalized_str = f"{track_name.lower().strip()}|{similar_artist_name.lower().strip()}"
+                            track_id = f"lastfm_{hash(normalized_str)}"
+                        
+                        # Get Spotify data
+                        spotify_data = self.get_spotify_track_data(track_name, similar_artist_name, access_token, all_excluded_tracks) if access_token else {'found': False, 'spotify_id': None, 'popularity': 50, 'album_cover': 'https://picsum.photos/300/300?random=1'}
+                        
+                        # Skip tracks not found on Spotify
+                        if not spotify_data.get('found', True):
+                            continue
+                        
+                        # Get Spotify track ID for exclusion
+                        spotify_track_id = spotify_data.get('spotify_id')
+                        if not spotify_track_id:
+                            external_url = spotify_data.get('external_url', '')
+                            if '/track/' in external_url:
+                                spotify_track_id = external_url.split('/track/')[-1].split('?')[0]
+                        
+                        # Simple exact name + artist matching for exclusion
+                        track_name_lower = track_name.lower().strip()
+                        artist_name_lower = similar_artist_name.lower().strip()
+                        
+                        # Check if this track is in the exclusion list by name + artist
+                        is_excluded = False
+                        for excluded_track in excluded_track_data:
+                            excluded_name = excluded_track.get('name', '').lower().strip()
+                            excluded_artist = excluded_track.get('artist', '').lower().strip()
+                            
+                            if excluded_name == track_name_lower and excluded_artist == artist_name_lower:
+                                print(f"EXCLUDED {track_name} by {similar_artist_name} - exact name+artist match")
+                                is_excluded = True
+                                break
+                        
+                        if is_excluded:
+                            continue
+                        
+                        # Check popularity preference
+                        popularity_group = self.get_popularity_group(spotify_data['popularity'], popularity)
+                        if popularity_group == "underground" and popularity > 66:
+                            continue
+                        elif popularity_group == "popular" and popularity < 34:
+                            continue
+                        
+                        # Create recommendation
+                        recommendation = {
+                            'id': track_id,
+                            'name': track_name,
+                            'artist': similar_artist_name,
+                            'album': 'Unknown Album',
+                            'duration_ms': spotify_data.get('duration_ms', 0),
+                            'popularity': spotify_data['popularity'],
+                            'preview_url': spotify_data.get('preview_url'),
+                            'external_url': spotify_data.get('external_url', f"https://open.spotify.com/search/{track_name}%20{similar_artist_name}"),
+                            'album_cover': spotify_data['album_cover'],
+                        }
+                        
+                        artist_recommendations.append(recommendation)
+                        break  # Only take one track per artist
+                        
+            except Exception as e:
+                print(f"Error processing artist {artist_name}: {e}")
+            
+            return artist_recommendations
+        
+        # Process artists in parallel
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            # Submit all artist processing tasks
+            future_to_artist = {executor.submit(process_artist, artist_data): artist_data for artist_data in top_artists}
+            
+            # Collect results as they complete
+            for future in as_completed(future_to_artist):
+                try:
+                    artist_recommendations = future.result()
+                    with recommendations_lock:
+                        all_recommendations.extend(artist_recommendations)
+                except Exception as e:
+                    artist_name = future_to_artist[future][0]
+                    print(f"Error processing artist {artist_name}: {e}")
+        
+        return all_recommendations
+
     def get_auto_discovery_recommendations(self, 
-                                           user_tracks: List[Dict], # these are the filtered and randomized tracks used to build recommendations
+                                           analysis_tracks: List[Dict], # these are the filtered and randomized tracks used to build recommendations
                                            n_recommendations: int = 30, 
                                            excluded_track_ids: Set[str] = None, 
                                            access_token: str = None, 
                                            depth: int = 3, 
                                            popularity: int = 50, 
-                                           user_saved_tracks: Set[str] = None, # these all all the saved tracks (only used if user decides to exclude them)
+                                           excluded_track_data: List[Dict] = None, # these are all the saved tracks (only used if user decides to exclude them)
                                            progress_callback: callable = None) -> Dict:
         """
         Get auto discovery recommendations based on a mix of user's saved tracks using Last.fm
@@ -476,7 +788,7 @@ class LastFMRecommendationService:
             # This identifies which artists the user listens to most frequently
             artist_counts = {}
             
-            for track in user_tracks:  # Analyze the filtered tracks provided (based on depth slider)
+            for track in analysis_tracks:  # Analyze the filtered tracks provided (based on depth slider)
                 artist_name = track.get('artists', [{}])[0].get('name', '') if track.get('artists') else ''
                 if artist_name:
                     artist_counts[artist_name] = artist_counts.get(artist_name, 0) + 1
@@ -490,8 +802,12 @@ class LastFMRecommendationService:
             # Get the user's most-played artists (based on depth slider setting)
             # These will be our "seed artists" to find similar music
             top_artists = sorted(artist_counts.items(), key=lambda x: x[1], reverse=True)[:depth]
+            if n_recommendations < 20:
+                top_artists = top_artists[:3]
+            else:
+                top_artists = top_artists[:5]
 
-            print(f"top artists: {top_artists[:10]}")
+            print(f"top artists: {top_artists[:5]}")
             
             # ============================================================================
             # STEP 4: SETUP FILTERING & EXCLUSION LISTS
@@ -503,139 +819,36 @@ class LastFMRecommendationService:
             
             # Get user's saved track IDs for filtering
             user_track_ids = set()
-            for track in user_tracks:
+            for track in analysis_tracks:
                 if track.get('id'):
                     user_track_ids.add(track['id'])
             
             # Add user's saved tracks to the exclusion list (if the user decided to exclude them)
-            if user_saved_tracks:
-                user_track_ids.update(user_saved_tracks)
+            if excluded_track_data:
+                print(f"DEBUG: Adding {len(excluded_track_data)} saved tracks to exclusion set")
+                # Extract track IDs from the track data
+                saved_track_ids = {track.get('id') for track in excluded_track_data if track.get('id')}
+                user_track_ids.update(saved_track_ids)
+                print(f"DEBUG: user_track_ids now has {len(user_track_ids)} tracks")
+            else:
+                print(f"DEBUG: excluded_track_data is None or empty, not adding to exclusion")
             
             # Create a combined exclusion set for easier filtering
             all_excluded_tracks = excluded_ids.union(user_track_ids)
+            print(f"DEBUG: Final exclusion set has {len(all_excluded_tracks)} tracks")
+            print(f"DEBUG: First 5 excluded track IDs: {list(all_excluded_tracks)[:5]}")
             
             # ============================================================================
-            # STEP 5: MAIN RECOMMENDATION GENERATION LOOP
+            # STEP 5: MAIN RECOMMENDATION GENERATION LOOP (PARALLELIZED)
             # ============================================================================
-            # For each of the user's top artists, find similar artists and their best tracks
-            for i, (artist_name, count) in enumerate(top_artists):
-                if len(all_recommendations) >= n_recommendations:
-                    break
-                
-                # Send progress update for each artist being processed
-                self.add_progress_message(f"Discovering music similar to {artist_name}...")
-                if progress_callback:
-                    progress_callback(f"Discovering music similar to {artist_name}...")
-                
-                # ============================================================================
-                # STEP 5A: FIND SIMILAR ARTISTS USING LAST.FM
-                # ============================================================================
-                # Use Last.fm's similarity data to find artists that sound like the user's favorites
-                # This is the core of the recommendation algorithm
-                similar_artists = self.lastfm_service.get_similar_artists(artist_name, limit=10)
-                print(f"🔍 DEBUG: Similar artists for {artist_name}: {[artist.get('name', 'Unknown') for artist in similar_artists[:5]]}")
-                
-                # ============================================================================
-                # STEP 5B: GET TOP TRACKS FROM EACH SIMILAR ARTIST
-                # ============================================================================
-                # For each similar artist, get their most popular tracks
-                # We limit to 2 tracks per artist to ensure variety
-                for similar_artist in similar_artists:
-                    if len(all_recommendations) >= n_recommendations:
-                        break
-                    
-                    similar_artist_name = similar_artist.get('name', '')
-                    if not similar_artist_name or similar_artist_name.lower() in seen_artists:
-                        continue
-                    
-                    # Get 2 tracks from this similar artist (skip the most popular ones)
-                    all_tracks = self.lastfm_service.get_artist_top_tracks(similar_artist_name, limit=4)  # Get more tracks to ensure we have enough
-
-                    # Grab 2 tracks from the artist - based on popularity preference
-                    if len(all_tracks) >= 6:
-                        if popularity > 75: # popular
-                            top_tracks = all_tracks[0:2] 
-                        elif popularity > 35: # balanced
-                            top_tracks = all_tracks[2:4]
-                        else: # underground
-                            top_tracks = all_tracks[4:6]
-                    else:
-                        top_tracks = all_tracks[0:2]  # Get 1st and 2nd most popular tracks
-                                        
-                    # ============================================================================
-                    # STEP 5C: PROCESS EACH TRACK WITH FILTERING & ENRICHMENT
-                    # ============================================================================
-                    # For each track, apply filters and enrich with Spotify data
-                    for track in top_tracks:
-                        if len(all_recommendations) >= n_recommendations:
-                            break
-                        
-                        track_name = track.get('name', '')
-                        if not track_name:
-                            continue
-                        
-                        # Filter out Live and Commentary versions (users typically want studio versions)
-                        track_name_lower = track_name.lower()
-                        if ('live' in track_name_lower or 'commentary' in track_name_lower or 
-                            '(live' in track_name_lower or '(commentary' in track_name_lower or
-                            '[live' in track_name_lower or '[commentary' in track_name_lower):
-                            continue
-                        
-                        # Generate consistent track ID for deduplication
-                        if track.get('mbid'):
-                            track_id = f"lastfm_{track.get('mbid')}"
-                        else:
-                            # Use consistent hash based on track name and artist
-                            normalized_str = f"{track_name.lower().strip()}|{similar_artist_name.lower().strip()}"
-                            track_id = f"lastfm_{hash(normalized_str)}"
-                        
-                        # Skip if already excluded (saved by user or previously recommended)
-                        if track_id in all_excluded_tracks:
-                            continue
-                        
-                        # ============================================================================
-                        # STEP 5D: ENRICH WITH SPOTIFY DATA & APPLY POPULARITY FILTERS
-                        # ============================================================================
-                        
-                        # Get track data from Spotify (including popularity, album cover, preview URL)
-                        spotify_data = self.get_spotify_track_data(track_name, similar_artist_name, access_token) if access_token else {'found': False, 'popularity': 50, 'album_cover': 'https://picsum.photos/300/300?random=1'}
-
-                        # Skip tracks that don't exist on Spotify
-                        if not spotify_data.get('found', True):
-                            continue
-                        
-                        # Check if track matches user's popularity preference
-                        popularity_group = self.get_popularity_group(spotify_data['popularity'], popularity)
-                        
-                        # Skip tracks that don't match user's preference (unless they're in the balanced group)
-                        if popularity_group == "underground" and popularity > 66:
-                            continue  # User wants popular music, skip underground
-                        elif popularity_group == "popular" and popularity < 34:
-                            continue  # User wants underground music, skip popular
-                        
-                        # ============================================================================
-                        # STEP 5E: CREATE RECOMMENDATION OBJECT
-                        # ============================================================================
-                        # Build the final recommendation object with all necessary data for the frontend
-                        recommendation = {
-                            'id': track_id,
-                            'name': track_name,
-                            'artist': similar_artist_name,
-                            'album': 'Unknown Album',
-                            'duration_ms': spotify_data.get('duration_ms', 0),
-                            'popularity': spotify_data['popularity'],
-                            # 'popularity_group': popularity_group,
-                            'preview_url': spotify_data.get('preview_url'),
-                            'external_url': spotify_data.get('external_url', f"https://open.spotify.com/search/{track_name}%20{similar_artist_name}"),
-                            # 'images': [{'url': spotify_data['album_cover']}],
-                            'album_cover': spotify_data['album_cover'],
-                            # 'similarity_score': similarity_score,
-                            # 'source': f'lastfm_auto_{artist_name}'
-                        }
-                        
-                        all_recommendations.append(recommendation)
-                        seen_artists.add(similar_artist_name.lower())
-                        break  # Only take one track per artist to ensure variety
+            # Process artists in parallel for faster recommendations
+            print(f"DEBUG: Starting recommendation generation with {len(all_excluded_tracks)} excluded tracks")
+            
+            # Use parallel processing for artist recommendations
+            all_recommendations = self._process_artists_parallel(
+                top_artists, all_excluded_tracks, excluded_track_data, 
+                seen_artists, n_recommendations, popularity, access_token, progress_callback
+            )
             
             # ============================================================================
             # STEP 6: FINALIZE & RETURN RECOMMENDATIONS
@@ -716,15 +929,37 @@ class LastFMRecommendationService:
                             normalized_str = f"{track_name.lower().strip()}|{expansion_artist.lower().strip()}"
                             track_id = f"lastfm_{hash(normalized_str)}"
                         
-                        # Skip if already excluded
-                        if track_id in all_excluded_tracks:
-                            continue
-                        
                         # Get track data from Spotify
-                        spotify_data = self.get_spotify_track_data(track_name, expansion_artist, access_token) if access_token else {'found': False, 'popularity': 50, 'album_cover': 'https://picsum.photos/300/300?random=1'}
+                        spotify_data = self.get_spotify_track_data(track_name, expansion_artist, access_token, all_excluded_tracks) if access_token else {'found': False, 'spotify_id': None, 'popularity': 50, 'album_cover': 'https://picsum.photos/300/300?random=1'}
                         
                         # Skip tracks that don't exist on Spotify
                         if not spotify_data.get('found', True):
+                            continue
+                        
+                        # Get the actual Spotify track ID for exclusion checking
+                        spotify_track_id = spotify_data.get('spotify_id')
+                        if not spotify_track_id:
+                            # Fallback: try to extract from external_url
+                            external_url = spotify_data.get('external_url', '')
+                            if '/track/' in external_url:
+                                spotify_track_id = external_url.split('/track/')[-1].split('?')[0]
+                        
+                        # Simple exact name + artist matching for exclusion
+                        track_name_lower = track_name.lower().strip()
+                        artist_name_lower = expansion_artist.lower().strip()
+                        
+                        # Check if this track is in the exclusion list by name + artist
+                        is_excluded = False
+                        for excluded_track in excluded_track_data:
+                            excluded_name = excluded_track.get('name', '').lower().strip()
+                            excluded_artist = excluded_track.get('artist', '').lower().strip()
+                            
+                            if excluded_name == track_name_lower and excluded_artist == artist_name_lower:
+                                print(f"EXCLUDED {track_name} by {expansion_artist} - exact name+artist match")
+                                is_excluded = True
+                                break
+                        
+                        if is_excluded:
                             continue
                         
                         # Check popularity preference
@@ -768,7 +1003,6 @@ class LastFMRecommendationService:
             # Check if we have zero recommendations and add special message
             if len(all_recommendations) == 0:
                 no_recommendations_message = "No more recommendations found for your current seed music. Please enter new music for new recommendations!"
-                self.add_progress_message(no_recommendations_message)
                 print(f"INFO: {no_recommendations_message}")
             
             # Return the final recommendation results with metadata
