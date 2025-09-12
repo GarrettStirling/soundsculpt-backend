@@ -2,8 +2,8 @@ import spotipy
 from spotipy.oauth2 import SpotifyOAuth, SpotifyClientCredentials
 import os
 from typing import List, Dict, Optional
-import pandas as pd
 from dotenv import load_dotenv
+import random
 
 load_dotenv()  # This will load variables from .env if not already loaded
 
@@ -37,10 +37,17 @@ class SpotifyService:
     def get_access_token(self, code: str) -> Optional[Dict]:
         """Exchange authorization code for access token"""
         try:
+            print(f"SPOTIFY SERVICE: Attempting token exchange with code: {code[:20]}...")
+            print(f"SPOTIFY SERVICE: Client ID: {self.client_id}")
+            print(f"SPOTIFY SERVICE: Redirect URI: {self.redirect_uri}")
+            
             token_info = self.sp_oauth.get_access_token(code)
+            print(f"SPOTIFY SERVICE: Token exchange successful: {token_info}")
             return token_info
         except Exception as e:
             print(f"TOKEN ERROR: {e}")
+            import traceback
+            traceback.print_exc()
             return None
     
     def create_spotify_client(self, access_token: str) -> spotipy.Spotify:
@@ -199,7 +206,6 @@ class SpotifyService:
                 
                 # Sample analysis tracks if needed
                 if max_tracks and len(cached_analysis_tracks) > max_tracks:
-                    import random
                     analysis_tracks = random.sample(cached_analysis_tracks, max_tracks)
                 else:
                     analysis_tracks = cached_analysis_tracks
@@ -328,7 +334,6 @@ class SpotifyService:
         
         # Sample analysis tracks if needed
         if max_tracks and len(analysis_tracks) > max_tracks:
-            import random
             analysis_tracks = random.sample(analysis_tracks, max_tracks)
         
         # Return appropriate data

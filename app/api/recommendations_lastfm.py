@@ -489,7 +489,7 @@ async def get_manual_recommendations_stream(
                     seed_tracks=seed_tracks_info,
                     n_recommendations=request.n_recommendations,
                     excluded_track_ids=excluded_ids,
-                    user_saved_tracks=excluded_track_data,
+                    excluded_tracks=excluded_track_data,
                     access_token=request.token,
                     popularity=request.popularity,
                     depth=request.depth,

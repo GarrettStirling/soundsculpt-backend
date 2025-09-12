@@ -94,12 +94,6 @@ class LastFMRecommendationService:
                                 if score > best_score:
                                     best_score = score
                                     best_match = track
-                                    
-                                    # Only log for specific tracks we're investigating
-                                    if track_name == 'Some Feeling' and artist_name == 'Mild Orange':
-                                        print(f"BEST MATCH: '{track.get('name')}' by {[artist.get('name') for artist in track.get('artists', [])]}")
-                                        print(f"  Spotify ID: {track_id}, Album: '{track.get('album', {}).get('name', 'Unknown')}'")
-                                        print(f"  Is saved version: {is_saved}")
                                             
                 except Exception as e:
                     continue
@@ -130,83 +124,6 @@ class LastFMRecommendationService:
         except Exception as e:
             return {'found': False, 'spotify_id': None, 'popularity': 50, 'album_cover': 'https://picsum.photos/300/300?random=1'}
     
-    def should_exclude_track_hybrid(self, track_name: str, artist_name: str, spotify_id: str, excluded_tracks: Set[str], excluded_track_data: List[Dict] = None) -> tuple:
-        """
-        Hybrid exclusion method: Check exact ID match first, then fallback to name+artist matching
-        Returns: (should_exclude: bool, match_type: str, timing_info: dict)
-        """
-        try:
-            import time
-            start_time = time.time()
-        
-            # Method 1: Exact Spotify ID match (fastest)
-            id_check_start = time.time()
-            if spotify_id and spotify_id in excluded_tracks:
-                id_check_time = time.time() - id_check_start
-                total_time = time.time() - start_time
-                return True, "exact_id", {"id_check_ms": round(id_check_time * 1000, 2), "total_ms": round(total_time * 1000, 2)}
-            id_check_time = time.time() - id_check_start
-            
-            # Method 2: Name + Artist matching (if we have track data)
-            if excluded_track_data:
-                name_check_start = time.time()
-                track_name_lower = track_name.lower().strip()
-                artist_name_lower = artist_name.lower().strip()
-                
-                for excluded_track in excluded_track_data:
-                    excluded_name = excluded_track.get('name', '').lower().strip()
-                    excluded_artist = excluded_track.get('artist', '').lower().strip()
-                    
-                    # Exact match
-                    if excluded_name == track_name_lower and excluded_artist == artist_name_lower:
-                        name_check_time = time.time() - name_check_start
-                        total_time = time.time() - start_time
-                        return True, "exact_name_artist", {
-                            "id_check_ms": round(id_check_time * 1000, 2),
-                            "name_check_ms": round(name_check_time * 1000, 2),
-                            "total_ms": round(total_time * 1000, 2)
-                        }
-                    
-                    # Fuzzy match (handle common variations)
-                    if (self._fuzzy_match(excluded_name, track_name_lower) and 
-                        self._fuzzy_match(excluded_artist, artist_name_lower)):
-                        name_check_time = time.time() - name_check_start
-                        total_time = time.time() - start_time
-                        return True, "fuzzy_name_artist", {
-                            "id_check_ms": round(id_check_time * 1000, 2),
-                            "name_check_ms": round(name_check_time * 1000, 2),
-                            "total_ms": round(total_time * 1000, 2)
-                        }
-                
-                name_check_time = time.time() - name_check_start
-            else:
-                name_check_time = 0
-            
-            total_time = time.time() - start_time
-            return False, "no_match", {
-                "id_check_ms": round(id_check_time * 1000, 2),
-                "name_check_ms": round(name_check_time * 1000, 2),
-                "total_ms": round(total_time * 1000, 2)
-            }
-        except Exception as e:
-            print(f"ERROR in should_exclude_track_hybrid: {e}")
-            import traceback
-            traceback.print_exc()
-            return False, "error", {"error": str(e), "total_ms": 0}
-    
-    def _fuzzy_match(self, str1: str, str2: str) -> bool:
-        """Simple fuzzy matching for track/artist names - more strict to avoid false positives"""
-        # Remove common suffixes and prefixes
-        clean1 = str1.replace('(feat.', '').replace('(ft.', '').replace('featuring', '').replace('feat', '').strip()
-        clean2 = str2.replace('(feat.', '').replace('(ft.', '').replace('featuring', '').replace('feat', '').strip()
-        
-        # Remove punctuation and extra spaces
-        import re
-        clean1 = re.sub(r'[^\w\s]', '', clean1).strip()
-        clean2 = re.sub(r'[^\w\s]', '', clean2).strip()
-        
-        # Only exact match after cleaning - no partial matches to avoid false positives
-        return clean1 == clean2
 
     def get_popularity_group(self, popularity: int, user_preference: int) -> str:
         """Determine popularity group based on user preference and track popularity"""
@@ -230,7 +147,7 @@ class LastFMRecommendationService:
                                          seed_tracks: List[Dict], 
                                          n_recommendations: int = 20, 
                                          excluded_track_ids: Set[str] = None, 
-                                         user_saved_tracks: List[Dict] = None, 
+                                         excluded_tracks: List[Dict] = None, 
                                          access_token: str = None,
                                          popularity: int = 50,
                                          depth: int = 3,
@@ -239,6 +156,9 @@ class LastFMRecommendationService:
         Get recommendations based on multiple seed tracks using Last.fm similarity data
         """
         start_time = time.time()
+        
+        # Set up excluded track data for filtering
+        excluded_track_data = excluded_tracks
         
         try:
             print(f"🚀 DEBUG: get_multiple_seed_recommendations called with {len(seed_tracks)} seed tracks")
@@ -311,10 +231,15 @@ class LastFMRecommendationService:
                         print(f"🔍 DEBUG: Fallback - {similar_artist_name}")
                         
                         # Get top tracks from this similar artist
-                        all_tracks = self.lastfm_service.get_artist_top_tracks(similar_artist_name, limit=4)
+                        all_tracks = self.lastfm_service.get_artist_top_tracks(similar_artist_name, limit=6)
                         
                         if len(all_tracks) >= 4:
-                            top_tracks = all_tracks[2:4]  # Get 3rd and 4th most popular tracks
+                            if popularity > 75:
+                                top_tracks = all_tracks[0:2] 
+                            elif popularity > 35:
+                                top_tracks = all_tracks[2:4]
+                            else:
+                                top_tracks = all_tracks[4:6]
                         else:
                             top_tracks = all_tracks[0:2]  # Get 1st and 2nd most popular tracks
                         
@@ -802,12 +727,14 @@ class LastFMRecommendationService:
             # Get the user's most-played artists (based on depth slider setting)
             # These will be our "seed artists" to find similar music
             top_artists = sorted(artist_counts.items(), key=lambda x: x[1], reverse=True)[:depth]
-            if n_recommendations < 20:
-                top_artists = top_artists[:3]
-            else:
-                top_artists = top_artists[:5]
-
             print(f"top artists: {top_artists[:5]}")
+            
+            if n_recommendations < 20:
+                selected_artists = random.sample(top_artists, 3)
+            else:
+                selected_artists = random.sample(top_artists, 4)
+
+            print(f"Artists selected for recommendation seeds: {selected_artists}")
             
             # ============================================================================
             # STEP 4: SETUP FILTERING & EXCLUSION LISTS
@@ -846,7 +773,7 @@ class LastFMRecommendationService:
             
             # Use parallel processing for artist recommendations
             all_recommendations = self._process_artists_parallel(
-                top_artists, all_excluded_tracks, excluded_track_data, 
+                selected_artists, all_excluded_tracks, excluded_track_data, 
                 seen_artists, n_recommendations, popularity, access_token, progress_callback
             )
             
