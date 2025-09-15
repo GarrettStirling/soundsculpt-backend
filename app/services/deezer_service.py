@@ -1,6 +1,7 @@
 import requests
 import logging
 import unicodedata
+import re
 from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,10 @@ class DeezerService:
             search_query = f"{track_name} {artist_name}"
             normalized_query = f"{self.normalize_string(track_name)} {self.normalize_string(artist_name)}"
             
+            # Add simplified version for tracks with parenthetical content
+            simplified_track = re.sub(r'\s*\([^)]*\)', '', track_name).strip()
+            simplified_query = f"{simplified_track} {artist_name}" if simplified_track != track_name else None
+            
             # Search Deezer with original query first
             search_url = f"{self.base_url}/search"
             params = {
@@ -49,6 +54,14 @@ class DeezerService:
                 logger.info(f"🔄 No results with original query, trying normalized: '{normalized_query}'")
                 logger.info(f"   Original: '{search_query}' -> Normalized: '{normalized_query}'")
                 params['q'] = normalized_query
+                response = requests.get(search_url, params=params, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+            
+            # If still no results and we have a simplified query, try that
+            if not data.get('data') and simplified_query:
+                logger.info(f"🔄 No results with normalized query, trying simplified: '{simplified_query}'")
+                params['q'] = simplified_query
                 response = requests.get(search_url, params=params, timeout=10)
                 response.raise_for_status()
                 data = response.json()
@@ -70,6 +83,14 @@ class DeezerService:
                 normalized_artist_name = self.normalize_string(artist_name)
                 normalized_title = self.normalize_string(title)
                 normalized_artist = self.normalize_string(artist)
+                
+                # Check for remix mismatch - if original doesn't have 'remix', don't match with remix
+                original_has_remix = 'remix' in normalized_track_name
+                deezer_has_remix = 'remix' in normalized_title
+                
+                if not original_has_remix and deezer_has_remix:
+                    logger.info(f"🚫 Skipping remix mismatch: Original '{track_name}' (no remix) vs Deezer '{title}' (has remix)")
+                    continue
                 
                 # Check if track name and artist match reasonably well
                 track_match = (normalized_track_name in normalized_title or 
