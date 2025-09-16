@@ -144,26 +144,85 @@ class ManualDiscoveryService:
             print(f"⏱️  Artist filtering (one per artist): {step_duration:.3f}s")
             print(f"🎯 After artist filtering: {len(artist_filtered_recommendations)} recommendations")
             
+            # Check for insufficient recommendations and try to fill using previous recommendations as seeds
+            final_recommendations = artist_filtered_recommendations
+            if len(final_recommendations) < n_recommendations and len(final_recommendations) > 0:
+                print(f"⚠️ INSUFFICIENT RECOMMENDATIONS: Got {len(final_recommendations)}, need {n_recommendations}")
+                print(f"🔄 Attempting to fill using current recommendations as seeds...")
+                
+                # Use some of the current recommendations as new seeds
+                new_seeds = final_recommendations[:min(3, len(final_recommendations))]  # Use up to 3 as seeds
+                additional_recommendations = []
+                
+                for seed_rec in new_seeds:
+                    try:
+                        # Create a seed track from the recommendation
+                        new_seed_track = {
+                            'name': seed_rec.get('name', ''),
+                            'artist': seed_rec.get('primary_artist', seed_rec.get('artist', ''))
+                        }
+                        
+                        # Get similar tracks for this new seed
+                        similar_tracks = self.lastfm_service.get_similar_tracks(
+                            new_seed_track['artist'], 
+                            new_seed_track['name'], 
+                            limit=10
+                        )
+                        
+                        if similar_tracks:
+                            # Process these similar tracks
+                            seed_recs = self._process_similar_tracks(
+                                similar_tracks, new_seed_track, all_excluded_tracks, 
+                                excluded_tracks, access_token, popularity
+                            )
+                            additional_recommendations.extend(seed_recs)
+                            
+                            if len(additional_recommendations) >= (n_recommendations - len(final_recommendations)):
+                                break
+                                
+                    except Exception as e:
+                        print(f"⚠️ Error using recommendation as seed: {e}")
+                        continue
+                
+                # Filter additional recommendations to avoid duplicates
+                seen_ids = {rec.get('id') for rec in final_recommendations}
+                unique_additional = []
+                for rec in additional_recommendations:
+                    if rec.get('id') not in seen_ids and rec.get('id') not in all_excluded_tracks:
+                        unique_additional.append(rec)
+                        seen_ids.add(rec.get('id'))
+                        if len(unique_additional) >= (n_recommendations - len(final_recommendations)):
+                            break
+                
+                # Add unique additional recommendations
+                final_recommendations.extend(unique_additional)
+                print(f"🔄 Added {len(unique_additional)} additional recommendations from seed expansion")
+            
             # Log final recommendations
-            if artist_filtered_recommendations:
-                print(f"📋 FINAL RECOMMENDATIONS (one per artist):")
-                for i, rec in enumerate(artist_filtered_recommendations[:5]):
+            if final_recommendations:
+                print(f"📋 FINAL RECOMMENDATIONS:")
+                for i, rec in enumerate(final_recommendations[:5]):
                     print(f"   {i+1}. {rec.get('name', 'Unknown')} by {rec.get('artist', 'Unknown')}")
-                if len(artist_filtered_recommendations) > 5:
-                    print(f"   ... and {len(artist_filtered_recommendations) - 5} more")
+                if len(final_recommendations) > 5:
+                    print(f"   ... and {len(final_recommendations) - 5} more")
             
             service_duration = time.time() - service_start_time
             print(f"⏱️  TOTAL SERVICE DURATION: {service_duration:.3f}s")
             
+            # Check for no more recommendations and insufficient recommendations
+            no_more_recommendations = len(final_recommendations) == 0
+            insufficient_recommendations = len(final_recommendations) > 0 and len(final_recommendations) < n_recommendations
+            
             return {
-                'recommendations': artist_filtered_recommendations,
+                'recommendations': final_recommendations,
                 'total_found': len(all_recommendations),
-                'unique_count': len(artist_filtered_recommendations),
+                'unique_count': len(final_recommendations),
                 'seed_tracks_processed': len(seed_tracks),
                 'generation_time': service_duration,
                 'method': 'lastfm_multiple_seed',
                 'progress_messages': self.progress_messages,
-                'no_more_recommendations': len(artist_filtered_recommendations) == 0
+                'no_more_recommendations': no_more_recommendations,
+                'insufficient_recommendations': insufficient_recommendations
             }
             
         except Exception as e:

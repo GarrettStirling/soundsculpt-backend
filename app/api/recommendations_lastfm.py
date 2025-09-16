@@ -544,13 +544,22 @@ async def get_manual_recommendations_stream(request: ManualRecommendationRequest
                 result['recommendations'] = recommendations
                 result['unique_count'] = len(recommendations)
                 
-                # Check if there are no more recommendations available
+                # Check for exhausted recommendations and insufficient recommendations
                 if result.get('no_more_recommendations', False) and len(recommendations) == 0:
                     progress_callback("No more recommendations found for your current seed music. Please enter new music for new recommendations!")
                     result['no_more_recommendations'] = True
+                    result['insufficient_recommendations'] = False
                 elif result.get('no_more_recommendations', False):
                     progress_callback("Limited recommendations available. Consider adding new seed music for more variety!")
                     result['no_more_recommendations'] = True
+                    result['insufficient_recommendations'] = False
+                elif result.get('insufficient_recommendations', False):
+                    progress_callback(f"Found {len(recommendations)} recommendations (requested {request.n_recommendations})")
+                    result['insufficient_recommendations'] = True
+                    result['no_more_recommendations'] = False
+                else:
+                    result['insufficient_recommendations'] = False
+                    result['no_more_recommendations'] = False
                 
                 progress_queue.put({'type': 'result', 'data': result})
                 
