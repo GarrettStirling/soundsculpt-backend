@@ -80,12 +80,21 @@ class AutoDiscoveryService:
             top_artists = sorted(artist_counts.items(), key=lambda x: x[1], reverse=True)[:depth]
             print(f"top artists: {top_artists[:5]}")
             
+            # Select artists for recommendations, but don't exceed available artists
+            available_artists = len(top_artists)
             if n_recommendations < 20:
-                selected_artists = random.sample(top_artists, 3)
+                num_artists = min(3, available_artists)
             else:
-                selected_artists = random.sample(top_artists, 4)
+                num_artists = min(4, available_artists)
+            
+            # If we have very few artists, use all of them
+            if available_artists <= 2:
+                selected_artists = top_artists
+            else:
+                selected_artists = random.sample(top_artists, num_artists)
 
             print(f"Artists selected for recommendation seeds: {selected_artists}")
+            print(f"DEBUG: Available artists: {available_artists}, Selected artists: {len(selected_artists)}")
             
             # ============================================================================
             # STEP 4: SETUP FILTERING & EXCLUSION LISTS
@@ -128,10 +137,12 @@ class AutoDiscoveryService:
             print(f"DEBUG: Starting recommendation generation with {len(all_excluded_tracks)} excluded tracks")
             
             # Use parallel processing for artist recommendations
+            print(f"DEBUG: Starting parallel processing with {len(selected_artists)} artists")
             all_recommendations = self._process_artists_parallel(
                 selected_artists, all_excluded_tracks, excluded_track_data, 
                 seen_artists, n_recommendations, popularity, access_token, progress_callback
             )
+            print(f"DEBUG: Parallel processing completed, got {len(all_recommendations)} recommendations")
             
             # ============================================================================
             # STEP 6: FINALIZE & RETURN RECOMMENDATIONS
@@ -253,7 +264,7 @@ class AutoDiscoveryService:
             
             # Check if we have zero recommendations and add special message
             if len(all_recommendations) == 0:
-                no_recommendations_message = "No more recommendations found for your current music taste. Please try different settings or add more music to your library!"
+                no_recommendations_message = "No more recommendations found. Please try different settings or add more music to your library!"
                 print(f"INFO: {no_recommendations_message}")
             
             # Return the final recommendation results with metadata
@@ -302,11 +313,14 @@ class AutoDiscoveryService:
             
             try:
                 # Get similar artists for this seed artist
+                print(f"🔍 DEBUG: Getting similar artists for {artist_name}")
                 similar_artists = self.lastfm_service.get_similar_artists(artist_name, limit=20)
                 
                 if not similar_artists:
                     print(f"❌ No similar artists found for {artist_name}")
                     return artist_recommendations
+                
+                print(f"✅ DEBUG: Found {len(similar_artists)} similar artists for {artist_name}")
                 
                 print(f"🎵 Found {len(similar_artists)} similar artists for {artist_name}")
                 
