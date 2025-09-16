@@ -99,6 +99,7 @@ class ManualRecommendationRequest(BaseModel):
     n_recommendations: Optional[int] = 20
     excluded_track_ids: Optional[List[str]] = []
     previously_generated_track_ids: Optional[List[str]] = []  # Track IDs from previous batches to exclude
+    batch_number: Optional[int] = 1  # Number of times user clicked "Generate Next Batch"
     token: Optional[str] = None
     depth: Optional[int] = 3
     exclude_saved_tracks: Optional[bool] = False
@@ -354,18 +355,13 @@ async def get_manual_recommendations_stream(request: ManualRecommendationRequest
     try:
         # Start overall timing
         overall_start_time = time.time()
-        print(f"🔍 BACKEND DEBUG: Manual discovery request received")
-        print(f"🕐 TIMESTAMP: {time.strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"📋 Request details:")
-        print(f"  - seed_tracks: {request.seed_tracks}")
-        print(f"  - seed_artists: {request.seed_artists}")
-        print(f"  - seed_playlists: {request.seed_playlists}")
-        print(f"  - n_recommendations: {request.n_recommendations}")
-        print(f"  - popularity: {request.popularity}")
-        print(f"  - excluded_track_ids: {request.excluded_track_ids}")
-        print(f"  - previously_generated_track_ids: {request.previously_generated_track_ids}")
-        print(f"  - exclude_saved_tracks: {request.exclude_saved_tracks}")
-        print(f"  - token length: {len(request.token) if request.token else 0}")
+        
+        # Use the batch number from the request (set by frontend)
+        batch_number = request.batch_number or 1
+        
+        print(f"📦 BATCH NUMBER: {batch_number}")
+        print(f"🔍 DEBUG: Received batch_number from frontend: {request.batch_number}")
+        print(f"📋 Request: {len(request.seed_tracks)} seeds, {request.n_recommendations} recs, {len(request.previously_generated_track_ids) if request.previously_generated_track_ids else 0} previous")
         
         if not request.token or len(request.token) < 10:
             print("❌ ERROR: Invalid or missing access token")
@@ -380,78 +376,40 @@ async def get_manual_recommendations_stream(request: ManualRecommendationRequest
             raise HTTPException(status_code=400, detail="At least one seed track, artist, or playlist must be provided for recommendations")
         
         # Initialize services
-        print(f"🔧 STEP 1: Initializing services...")
-        step_start = time.time()
         spotify_service = SpotifyService()
         manual_discovery_service = ManualDiscoveryService()
-        step_duration = time.time() - step_start
-        print(f"⏱️  Service initialization: {step_duration:.3f}s")
-        
-        print(f"🔧 STEP 2: Creating Spotify client...")
-        step_start = time.time()
         sp = spotify_service.create_spotify_client(request.token)
-        step_duration = time.time() - step_start
-        print(f"⏱️  Spotify client creation: {step_duration:.3f}s")
         
         # Check if token is expired
         if spotify_service.is_token_expired(sp):
             raise HTTPException(status_code=401, detail="Spotify access token has expired. Please reconnect your Spotify account.")
         
         # Test authentication
-        print(f"🔧 STEP 3: Testing authentication...")
-        step_start = time.time()
         try:
             user_info = sp.me()
-            print(f"Creating streaming Last.fm-based recommendations for user: {user_info.get('display_name', 'Unknown')}")
+            user_id = user_info.get('id', 'unknown')
         except Exception as auth_error:
-            print(f"Authentication failed: {auth_error}")
             raise HTTPException(status_code=401, detail="Invalid or expired access token")
-        step_duration = time.time() - step_start
-        print(f"⏱️  Authentication: {step_duration:.3f}s")
         
         # Process seed data
-        print(f"🔧 STEP 4: Processing seed data...")
-        step_start = time.time()
         seed_tracks_info = _process_seed_data(sp, request)
-        step_duration = time.time() - step_start
-        print(f"⏱️  Seed data processing: {step_duration:.3f}s")
         
         if not seed_tracks_info:
             raise HTTPException(status_code=400, detail="Could not retrieve any valid seed information from tracks, artists, or playlists")
         
-        print(f"📊 Manual discovery seeds processed: {len(seed_tracks_info)} total seed tracks")
-        seed_details = [f"{track.get('name', 'Unknown')} by {track.get('artist', 'Unknown')}" for track in seed_tracks_info]
-        print(f"📋 Seed tracks details: {seed_details}")
+        print(f"📋 Seeds: {len(seed_tracks_info)} tracks")
         
         # Get user ID for caching
-        print(f"🔧 STEP 5: Processing exclusion logic...")
-        step_start = time.time()
         user_id = get_user_id_from_token(request.token)
-        print(f"👤 User ID: {user_id}")
         
         # Get cached excluded track IDs
         cached_excluded_ids = get_cached_excluded_tracks(user_id)
-        print(f"🗄️ Cached excluded track IDs: {len(cached_excluded_ids)}")
-        if cached_excluded_ids:
-            print(f"🗄️ Cached track IDs: {list(cached_excluded_ids)[:5]}{'...' if len(cached_excluded_ids) > 5 else ''}")
-        
-        # Get excluded tracks if requested
         excluded_ids = set(request.excluded_track_ids) if request.excluded_track_ids else set()
         previously_generated_ids = set(request.previously_generated_track_ids) if request.previously_generated_track_ids else set()
         
-        print(f"🚫 Manual exclusions: {len(excluded_ids)}")
-        print(f"🔒 Previously generated exclusions: {len(previously_generated_ids)}")
-        if previously_generated_ids:
-            print(f"🔒 Previously generated track IDs: {list(previously_generated_ids)[:5]}{'...' if len(previously_generated_ids) > 5 else ''}")
-        
         # Combine all excluded track IDs
         all_excluded_ids = excluded_ids.union(cached_excluded_ids).union(previously_generated_ids)
-        print(f"🚫 TOTAL EXCLUDED TRACK IDs: {len(all_excluded_ids)}")
-        if all_excluded_ids:
-            print(f"🚫 Sample excluded IDs: {list(all_excluded_ids)[:5]}{'...' if len(all_excluded_ids) > 5 else ''}")
-        
-        step_duration = time.time() - step_start
-        print(f"⏱️  Exclusion logic processing: {step_duration:.3f}s")
+        print(f"🚫 Excluded: {len(all_excluded_ids)} total")
         
         excluded_track_data = []
         if request.exclude_saved_tracks:
@@ -477,7 +435,7 @@ async def get_manual_recommendations_stream(request: ManualRecommendationRequest
         
         def generate_recommendations():
             try:
-                print(f"🔧 STEP 6: Checking for cached recommendations...")
+                print(f"🔍 Checking for cached recommendations...")
                 step_start = time.time()
                 
                 # First, try to get recommendations from cache
@@ -503,32 +461,44 @@ async def get_manual_recommendations_stream(request: ManualRecommendationRequest
                     print(f"⏱️  Cached recommendation retrieval: {step_duration:.3f}s")
                 else:
                     # Not enough cached recommendations, need to generate more
-                    print(f"🔧 STEP 6: Generating new recommendations (cache had {len(cached_recommendations)}, need {request.n_recommendations})")
+                    print(f"🔄 Generating new recommendations (cache had {len(cached_recommendations)}, need {request.n_recommendations})")
                     
-                    progress_callback("Processing your selected seed tracks...")
+                progress_callback("Processing your selected seed tracks...")
                     
-                    print(f"🎯 Calling manual_discovery_service.get_multiple_seed_recommendations()")
-                    print(f"   - seed_tracks: {len(seed_tracks_info)}")
-                    print(f"   - n_recommendations: {request.n_recommendations}")
-                    print(f"   - excluded_track_ids: {len(all_excluded_ids)}")
-                    print(f"   - popularity: {request.popularity}")
+                print(f"🎯 Calling manual_discovery_service.get_multiple_seed_recommendations()")
+                print(f"   - seed_tracks: {len(seed_tracks_info)}")
+                print(f"   - n_recommendations: {request.n_recommendations}")
+                print(f"   - excluded_track_ids: {len(all_excluded_ids)}")
+                print(f"   - popularity: {request.popularity}")
                     
-                    result = manual_discovery_service.get_multiple_seed_recommendations(
-                        seed_tracks=seed_tracks_info,
-                        n_recommendations=request.n_recommendations,
-                        excluded_track_ids=all_excluded_ids,
-                        excluded_tracks=excluded_track_data,
-                        access_token=request.token,
-                        popularity=request.popularity,
-                        depth=request.depth,
-                        progress_callback=progress_callback,
-                        previously_generated_track_ids=previously_generated_ids
-                    )
-                    
-                    step_duration = time.time() - step_start
-                    print(f"⏱️  Recommendation generation: {step_duration:.3f}s")
+                result = manual_discovery_service.get_multiple_seed_recommendations(
+                seed_tracks=seed_tracks_info,
+                n_recommendations=request.n_recommendations,
+                    excluded_track_ids=all_excluded_ids,
+                excluded_tracks=excluded_track_data,
+                access_token=request.token,
+                popularity=request.popularity,
+                depth=request.depth,
+                    progress_callback=progress_callback,
+                    previously_generated_track_ids=previously_generated_ids
+                )
+                
+                step_duration = time.time() - step_start
+                print(f"⏱️  Recommendation generation: {step_duration:.3f}s")
                 
                 progress_callback("Analyzing and filtering recommendations...")
+                
+                # Debug: Check what the manual discovery service actually returned
+                print(f"🔍 DEBUG: Manual discovery service returned: {type(result)}")
+                print(f"🔍 DEBUG: Result keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
+                
+                # Check if the service returned an error
+                if isinstance(result, dict) and 'error' in result:
+                    print(f"❌ CRITICAL: Manual discovery service returned error: {result['error']}")
+                    raise Exception(f"Manual discovery service error: {result['error']}")
+                
+                print(f"🔍 DEBUG: Recommendations in result: {len(result.get('recommendations', [])) if isinstance(result, dict) else 'No recommendations key'}")
+                
                 all_recommendations = result.get('recommendations', [])
                 
                 print(f"📊 Generated {len(all_recommendations)} total recommendations")
@@ -538,10 +508,11 @@ async def get_manual_recommendations_stream(request: ManualRecommendationRequest
                     random.shuffle(all_recommendations)
                 
                 # Add extra recommendations to the pool cache BEFORE filtering (only for newly generated recommendations)
-                print(f"🔧 STEP 7: Caching extra recommendations...")
+                print(f"💾 Caching extra recommendations...")
                 step_start = time.time()
                 if result.get('method') != 'cached_manual_discovery':
                     # Cache extras from ALL recommendations before filtering
+                    print(f"🔍 DEBUG: About to cache {len(all_recommendations)} recommendations, requested {request.n_recommendations}")
                     add_to_recommendation_pool(user_id, all_recommendations, request.n_recommendations)
                 else:
                     print(f"🎯 Skipping recommendation pool caching (used cached recommendations)")
@@ -549,7 +520,7 @@ async def get_manual_recommendations_stream(request: ManualRecommendationRequest
                 print(f"⏱️  Recommendation pool caching: {step_duration:.3f}s")
                 
                 # Now filter to the requested amount
-                print(f"🔧 STEP 8: Filtering to requested amount...")
+                print(f"✂️ Filtering to requested amount...")
                 step_start = time.time()
                 recommendations = all_recommendations[:request.n_recommendations]
                 step_duration = time.time() - step_start
@@ -558,7 +529,7 @@ async def get_manual_recommendations_stream(request: ManualRecommendationRequest
                 progress_callback(f"Found {len(recommendations)} recommendations!") 
                 
                 # Cache the generated track IDs for future exclusions
-                print(f"🔧 STEP 9: Caching generated track IDs...")
+                print(f"🗄️ Caching generated track IDs...")
                 step_start = time.time()
                 if recommendations:
                     generated_track_ids = {track.get('id') for track in recommendations if track.get('id')}
@@ -573,13 +544,21 @@ async def get_manual_recommendations_stream(request: ManualRecommendationRequest
                 result['recommendations'] = recommendations
                 result['unique_count'] = len(recommendations)
                 
+                # Check if there are no more recommendations available
+                if result.get('no_more_recommendations', False) and len(recommendations) == 0:
+                    progress_callback("No more recommendations found for your current seed music. Please enter new music for new recommendations!")
+                    result['no_more_recommendations'] = True
+                elif result.get('no_more_recommendations', False):
+                    progress_callback("Limited recommendations available. Consider adding new seed music for more variety!")
+                    result['no_more_recommendations'] = True
+                
                 progress_queue.put({'type': 'result', 'data': result})
                 
             except Exception as e:
                 progress_queue.put({'type': 'error', 'error': str(e)})
         
         # Start recommendation generation in a separate thread
-        print(f"🔧 STEP 8: Starting recommendation generation thread...")
+        print(f"🔧 Starting recommendation generation thread...")
         thread_start = time.time()
         thread = threading.Thread(target=generate_recommendations)
         thread.start()
