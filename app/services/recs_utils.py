@@ -59,6 +59,60 @@ class RecommendationUtils:
             print(f"Error getting album cover for {track_name} by {artist_name}: {e}")
             return 'https://picsum.photos/300/300?random=1'
 
+    def _extract_primary_artist(self, artist_name: str) -> str:
+        """Extract the primary artist from multi-artist strings"""
+        if not artist_name:
+            return ""
+        
+        # Handle common separators
+        separators = [',', '&', 'feat.', 'featuring', 'ft.', 'with']
+        
+        for sep in separators:
+            if sep in artist_name.lower():
+                return artist_name.split(sep)[0].strip()
+        
+        return artist_name.strip()
+
+    def _find_best_track_match(self, tracks: List[Dict], target_track_name: str, target_artist_name: str) -> Dict:
+        """Find the best matching track from Spotify results"""
+        if not tracks:
+            return None
+        
+        target_track_lower = target_track_name.lower()
+        target_artist_lower = target_artist_name.lower()
+        
+        # Score each track based on name and artist similarity
+        best_match = None
+        best_score = 0
+        
+        for track in tracks:
+            track_name = track.get('name', '').lower()
+            track_artists = [artist.get('name', '').lower() for artist in track.get('artists', [])]
+            
+            # Calculate similarity score
+            score = 0
+            
+            # Track name similarity (most important)
+            if target_track_lower in track_name or track_name in target_track_lower:
+                score += 10
+            
+            # Artist similarity
+            for artist in track_artists:
+                if target_artist_lower in artist or artist in target_artist_lower:
+                    score += 5
+                elif self._extract_primary_artist(target_artist_lower) in artist:
+                    score += 3
+            
+            # Prefer tracks with preview URLs
+            if track.get('preview_url'):
+                score += 1
+            
+            if score > best_score:
+                best_score = score
+                best_match = track
+        
+        return best_match if best_score > 0 else tracks[0]  # Fallback to first result
+
     def get_spotify_track_data(self, track_name: str, artist_name: str, access_token: str, excluded_track_ids: Set[str] = None) -> Dict:
         """
         Get comprehensive track data from Spotify including popularity, duration, preview URL, etc.
@@ -84,34 +138,59 @@ class RecommendationUtils:
                     'duration_ms': 0
                 }
             
-            # Search for the track on Spotify
+            # Search for the track on Spotify using multiple strategies
             sp = self.spotify_service.create_spotify_client(access_token)
-            search_query = f"track:\"{track_name}\" artist:\"{artist_name}\""
             
-            results = sp.search(q=search_query, type='track', limit=1)
+            # Try multiple search strategies to handle multi-artist tracks
+            search_strategies = [
+                # Strategy 1: Exact match with full artist name
+                f"track:\"{track_name}\" artist:\"{artist_name}\"",
+                # Strategy 2: More flexible search
+                f"track:\"{track_name}\" {artist_name}",
+                # Strategy 3: Just track name (in case artist name is incomplete)
+                f"track:\"{track_name}\"",
+                # Strategy 4: Extract primary artist from multi-artist strings
+                f"track:\"{track_name}\" artist:\"{self._extract_primary_artist(artist_name)}\""
+            ]
             
-            if results and results.get('tracks', {}).get('items'):
-                track = results['tracks']['items'][0]
-                track_id = track['id']
-                
-                # Check if this track is in the exclusion list
-                if excluded_track_ids and track_id in excluded_track_ids:
-                    return {'found': False, 'spotify_id': track_id, 'popularity': 0}
-                
-                # Get album cover
-                album = track.get('album', {})
-                images = album.get('images', [])
-                cover_url = images[1]['url'] if len(images) > 1 else (images[0]['url'] if images else 'https://picsum.photos/300/300?random=1')
-                
-                return {
-                    'found': True,
-                    'spotify_id': track_id,
-                    'popularity': track.get('popularity', 50),
-                    'album_cover': cover_url,
-                    'preview_url': track.get('preview_url', ''),
-                    'external_url': track.get('external_urls', {}).get('spotify', ''),
-                    'duration_ms': track.get('duration_ms', 0)
-                }
+            for search_query in search_strategies:
+                try:
+                    results = sp.search(q=search_query, type='track', limit=5)  # Get more results to find best match
+                    
+                    if results and results.get('tracks', {}).get('items'):
+                        # Find the best match from the results
+                        best_match = self._find_best_track_match(results['tracks']['items'], track_name, artist_name)
+                        
+                        if best_match:
+                            track_id = best_match['id']
+                            
+                            # Check if this track is in the exclusion list
+                            if excluded_track_ids and track_id in excluded_track_ids:
+                                continue  # Try next strategy
+                            
+                            # Get album cover
+                            album = best_match.get('album', {})
+                            images = album.get('images', [])
+                            cover_url = images[1]['url'] if len(images) > 1 else (images[0]['url'] if images else 'https://picsum.photos/300/300?random=1')
+                            
+                            # Get all artists from Spotify
+                            all_artists = [artist['name'] for artist in best_match.get('artists', [])]
+                            
+                            return {
+                                'found': True,
+                                'spotify_id': track_id,
+                                'popularity': best_match.get('popularity', 50),
+                                'album_cover': cover_url,
+                                'preview_url': best_match.get('preview_url', ''),
+                                'external_url': best_match.get('external_urls', {}).get('spotify', ''),
+                                'duration_ms': best_match.get('duration_ms', 0),
+                                'matched_artists': all_artists,
+                                'primary_artist': all_artists[0] if all_artists else artist_name,
+                                'all_artists_string': ', '.join(all_artists) if all_artists else artist_name
+                            }
+                except Exception as e:
+                    print(f"Search strategy failed for '{search_query}': {e}")
+                    continue
             
             return {
                 'found': False,

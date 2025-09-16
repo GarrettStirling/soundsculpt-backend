@@ -46,41 +46,63 @@ class ManualDiscoveryService:
             Dict: Recommendations with metadata
         """
         try:
+            service_start_time = time.time()
             print(f"🎵 Starting Last.fm multiple seed recommendations")
             print(f"   📊 Seed tracks: {len(seed_tracks)}")
             print(f"   🎯 Target recommendations: {n_recommendations}")
             print(f"   🚫 Excluded track IDs: {len(excluded_track_ids) if excluded_track_ids else 0}")
             print(f"   🚫 Excluded tracks: {len(excluded_tracks) if excluded_tracks else 0}")
             print(f"   🎚️ Popularity preference: {popularity}")
+            print(f"   🔒 Previously generated track IDs: {len(previously_generated_track_ids) if previously_generated_track_ids else 0}")
+            
+            # Log seed track details
+            print(f"📋 SEED TRACKS DETAILS:")
+            for i, track in enumerate(seed_tracks):
+                print(f"   {i+1}. {track.get('name', 'Unknown')} by {track.get('artist', 'Unknown')}")
             
             all_recommendations = []
             recommended_track_ids = set()
             seen_artists = set()
             
             # Create a combined exclusion set for easier filtering
+            print(f"🔧 STEP 1: Processing exclusion logic...")
+            step_start = time.time()
             excluded_ids = excluded_track_ids or set()
             
             # Add previously generated track IDs to exclusion list to avoid duplicates across batches
             if previously_generated_track_ids:
                 excluded_ids = excluded_ids.union(previously_generated_track_ids)
                 print(f"🔒 Added {len(previously_generated_track_ids)} previously generated track IDs to exclusion list")
+                print(f"🔒 Previously generated IDs: {list(previously_generated_track_ids)[:5]}{'...' if len(previously_generated_track_ids) > 5 else ''}")
             
             all_excluded_tracks = excluded_ids
+            print(f"🚫 TOTAL EXCLUDED TRACK IDs: {len(all_excluded_tracks)}")
+            step_duration = time.time() - step_start
+            print(f"⏱️  Exclusion processing: {step_duration:.3f}s")
             
             # Process each seed track in parallel
+            print(f"🔧 STEP 2: Processing seed tracks in parallel...")
+            step_start = time.time()
+            print(f"🎯 Using ThreadPoolExecutor with max_workers={min(3, len(seed_tracks))}")
+            
             with ThreadPoolExecutor(max_workers=min(3, len(seed_tracks))) as executor:
                 seed_futures = [executor.submit(self._process_single_seed_track, i, seed_track, 
                                               all_excluded_tracks, excluded_tracks, access_token, 
                                               popularity, progress_callback) 
-                              for i, seed_track in enumerate(seed_tracks)]
+                               for i, seed_track in enumerate(seed_tracks)]
+                
+                print(f"📋 Submitted {len(seed_futures)} seed track processing tasks")
                 for future in as_completed(seed_futures):
                     try:
                         seed_recs = future.result()
                         all_recommendations.extend(seed_recs)
+                        print(f"✅ Completed seed track processing, got {len(seed_recs)} recommendations")
                     except Exception as e:
                         print(f"❌ Error processing seed track: {e}")
                         continue
             
+            step_duration = time.time() - step_start
+            print(f"⏱️  Parallel seed processing: {step_duration:.3f}s")
             print(f"📊 Collected {len(all_recommendations)} total recommendations from {len(seed_tracks)} seed tracks")
             
             # Show breakdown by seed track
@@ -91,26 +113,40 @@ class ManualDiscoveryService:
                 print(f"   🎵 Seed {i+1}: '{seed_name}' by {seed_artist} → {len(seed_recs)} recommendations")
             
             # Remove duplicates and limit results
+            print(f"🔧 STEP 3: Filtering and deduplicating recommendations...")
+            step_start = time.time()
+            
             unique_recommendations = []
             seen_track_ids = set()
             
             for rec in all_recommendations:
                 track_id = rec.get('id')
-                if track_id and track_id not in seen_track_ids:
+                if track_id and track_id not in seen_track_ids and track_id not in all_excluded_tracks:
                     unique_recommendations.append(rec)
                     seen_track_ids.add(track_id)
-                    
-                    if len(unique_recommendations) >= n_recommendations:
-                        break
+                    # Don't break early - return ALL unique recommendations
             
+            step_duration = time.time() - step_start
+            print(f"⏱️  Filtering and deduplication: {step_duration:.3f}s")
             print(f"🎯 Final unique recommendations: {len(unique_recommendations)}")
+            
+            # Log final recommendations
+            if unique_recommendations:
+                print(f"📋 FINAL RECOMMENDATIONS:")
+                for i, rec in enumerate(unique_recommendations[:5]):
+                    print(f"   {i+1}. {rec.get('name', 'Unknown')} by {rec.get('artist', 'Unknown')}")
+                if len(unique_recommendations) > 5:
+                    print(f"   ... and {len(unique_recommendations) - 5} more")
+            
+            service_duration = time.time() - service_start_time
+            print(f"⏱️  TOTAL SERVICE DURATION: {service_duration:.3f}s")
             
             return {
                 'recommendations': unique_recommendations,
                 'total_found': len(all_recommendations),
                 'unique_count': len(unique_recommendations),
                 'seed_tracks_processed': len(seed_tracks),
-                'generation_time': 0,
+                'generation_time': service_duration,
                 'method': 'lastfm_multiple_seed',
                 'progress_messages': self.progress_messages,
                 'no_more_recommendations': len(unique_recommendations) == 0
@@ -139,13 +175,18 @@ class ManualDiscoveryService:
             list: List of recommendation dictionaries for this seed track
         """
         seed_recommendations = []
+        seed_start_time = time.time()
         print(f"🔍 DEBUG: Processing seed track {seed_index+1}: '{seed_track['name']}' by {seed_track['artist']}")
         self.add_progress_message(f"Finding music similar to '{seed_track['name']}' by {seed_track['artist']}...")
         if progress_callback:
             progress_callback(f"Finding music similar to '{seed_track['name']}' by {seed_track['artist']}...")
         
         # Get similar tracks for this seed
-        similar_tracks = self.lastfm_service.get_similar_tracks(seed_track['artist'], seed_track['name'], limit=50)
+        print(f"🔍 Getting similar tracks from Last.fm...")
+        step_start = time.time()
+        similar_tracks = self.lastfm_service.get_similar_tracks(seed_track['artist'], seed_track['name'], limit=30)
+        step_duration = time.time() - step_start
+        print(f"⏱️  Last.fm similar tracks API call: {step_duration:.3f}s")
         print(f"🔍 DEBUG: Found {len(similar_tracks)} similar tracks for '{seed_track['name']}' by {seed_track['artist']}")
         
         if not similar_tracks:
@@ -153,7 +194,11 @@ class ManualDiscoveryService:
             print(f"❌ DEBUG: No similar tracks found for '{seed_track['name']}' by {seed_track['artist']}")
             print(f"🔄 DEBUG: Trying similar artists as fallback for '{seed_track['name']}' by {seed_track['artist']}")
             
-            similar_artists = self.lastfm_service.get_similar_artists(seed_track['artist'], limit=30)
+            print(f"🔍 Getting similar artists from Last.fm...")
+            step_start = time.time()
+            similar_artists = self.lastfm_service.get_similar_artists(seed_track['artist'], limit=10)
+            step_duration = time.time() - step_start
+            print(f"⏱️  Last.fm similar artists API call: {step_duration:.3f}s")
             print(f"🔍 DEBUG: Found {len(similar_artists)} similar artists as fallback")
             
             if not similar_artists:
@@ -173,6 +218,10 @@ class ManualDiscoveryService:
                 similar_tracks, seed_track, all_excluded_tracks, excluded_tracks, 
                 access_token, popularity
             )
+        
+        seed_duration = time.time() - seed_start_time
+        print(f"⏱️  TOTAL SEED PROCESSING TIME: {seed_duration:.3f}s")
+        print(f"📊 Seed {seed_index+1} generated {len(seed_recommendations)} recommendations")
         
         return seed_recommendations
 
@@ -278,11 +327,13 @@ class ManualDiscoveryService:
             if not self.utils.matches_popularity_preference(spotify_data['popularity'], popularity):
                 continue
             
-            # Create recommendation
+            # Create recommendation with multi-artist support
             recommendation = {
                 'id': track_id,
                 'name': track_name,
-                'artist': similar_artist_name,
+                'artist': spotify_data.get('all_artists_string', similar_artist_name),  # Use all artists if available
+                'primary_artist': spotify_data.get('primary_artist', similar_artist_name),
+                'all_artists': spotify_data.get('matched_artists', [similar_artist_name]),
                 'album_cover': spotify_data['album_cover'],
                 'preview_url': spotify_data.get('preview_url', ''),
                 'external_url': spotify_data.get('external_url', ''),
@@ -350,11 +401,13 @@ class ManualDiscoveryService:
             # Use actual similarity score from Last.fm
             similarity_score = float(track.get('match', 0)) if track.get('match') else 0.8
             
-            # Create recommendation
+            # Create recommendation with multi-artist support
             recommendation = {
                 'id': track_id,
                 'name': track_name,
-                'artist': artist_name,
+                'artist': spotify_data.get('all_artists_string', artist_name),  # Use all artists if available
+                'primary_artist': spotify_data.get('primary_artist', artist_name),
+                'all_artists': spotify_data.get('matched_artists', [artist_name]),
                 'album_cover': spotify_data['album_cover'],
                 'preview_url': spotify_data.get('preview_url', ''),
                 'external_url': spotify_data.get('external_url', ''),

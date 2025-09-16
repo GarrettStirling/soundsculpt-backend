@@ -20,6 +20,11 @@ from app.services.recs_auto import AutoDiscoveryService
 # In-memory cache for excluded track IDs by user session
 # Key: user_id (derived from token), Value: Set of excluded track IDs
 excluded_tracks_cache: Dict[str, Set[str]] = {}
+
+# In-memory cache for extra recommendations by user session
+# Key: user_id (derived from token), Value: List of unused recommendations
+recommendation_pool_cache: Dict[str, List[Dict]] = {}
+
 cache_lock = threading.Lock()
 
 router = APIRouter(prefix="/recommendations", tags=["Music Recommendations"])
@@ -49,6 +54,41 @@ def clear_excluded_cache(user_id: str) -> None:
         if user_id in excluded_tracks_cache:
             del excluded_tracks_cache[user_id]
             print(f"🗑️ Cleared excluded cache for user {user_id}")
+
+def get_cached_recommendations(user_id: str, n_recommendations: int) -> List[Dict]:
+    """Get cached recommendations from the pool"""
+    with cache_lock:
+        cached_recs = recommendation_pool_cache.get(user_id, [])
+        if len(cached_recs) >= n_recommendations:
+            # Return the requested number and keep the rest
+            result = cached_recs[:n_recommendations]
+            recommendation_pool_cache[user_id] = cached_recs[n_recommendations:]
+            print(f"🎯 Retrieved {len(result)} recommendations from cache, {len(recommendation_pool_cache[user_id])} remaining")
+            return result
+        else:
+            # Return all cached recommendations and clear the cache
+            recommendation_pool_cache[user_id] = []
+            print(f"🎯 Retrieved {len(cached_recs)} recommendations from cache (all remaining)")
+            return cached_recs
+
+def add_to_recommendation_pool(user_id: str, recommendations: List[Dict], n_requested: int) -> None:
+    """Add extra recommendations to the pool cache"""
+    with cache_lock:
+        if len(recommendations) > n_requested:
+            extra_recommendations = recommendations[n_requested:]
+            if user_id not in recommendation_pool_cache:
+                recommendation_pool_cache[user_id] = []
+            recommendation_pool_cache[user_id].extend(extra_recommendations)
+            print(f"🎯 Added {len(extra_recommendations)} extra recommendations to pool cache")
+        else:
+            print(f"🎯 No extra recommendations to cache (got {len(recommendations)}, requested {n_requested})")
+
+def clear_recommendation_pool(user_id: str) -> None:
+    """Clear the recommendation pool cache for a user"""
+    with cache_lock:
+        if user_id in recommendation_pool_cache:
+            del recommendation_pool_cache[user_id]
+            print(f"🗑️ Cleared recommendation pool cache for user {user_id}")
 
 # Pydantic models
 class ManualRecommendationRequest(BaseModel):
@@ -203,13 +243,13 @@ async def get_search_based_recommendations_stream(
                         # Fetch user's saved tracks
                         fetch_start_time = time.time()
                         
-                        analysis_tracks, excluded_ids, excluded_track_data = spotify_service.get_user_saved_tracks_parallel(
+                        analysis_tracks, _, excluded_track_data = spotify_service.get_user_saved_tracks_parallel(
                             sp_client=sp,
                             max_tracks=analysis_track_count,
                             exclude_tracks=exclude_saved_tracks
                         )
                         
-                        progress_callback(f"Fetched {len(analysis_tracks)} recent tracks...")
+                        # progress_callback(f"Fetched {len(analysis_tracks)} recent tracks...")
                         
                         fetch_end_time = time.time()
                         fetch_duration = round(fetch_end_time - fetch_start_time, 2)
@@ -218,26 +258,26 @@ async def get_search_based_recommendations_stream(
                         # Apply random sampling to reduce analysis tracks to ~150 for performance
                         target_analysis_count = 150
                         if len(analysis_tracks) > target_analysis_count:
-                            progress_callback(f"Randomly sampling {target_analysis_count} tracks from {len(analysis_tracks)} for analysis...")
+                            # progress_callback(f"Randomly sampling {target_analysis_count} tracks from {len(analysis_tracks)} for analysis...")
                             random.seed(generation_seed)
                             analysis_tracks = random.sample(analysis_tracks, target_analysis_count)
                             print(f"Selected {len(analysis_tracks)} tracks for analysis")
                         else:
                             progress_callback(f"Using all {len(analysis_tracks)} tracks for analysis...")
                         
-                        progress_callback("Calling Last.fm recommendation API with your music...")
+                        progress_callback("Finding hidden gems...")
                         
                         # Generate recommendations using auto discovery service
                         rec_start_time = time.time()
                         
                         result = auto_discovery_service.get_auto_discovery_recommendations(
-                            analysis_tracks=analysis_tracks,
-                            n_recommendations=n_recommendations,
+                                analysis_tracks=analysis_tracks,
+                                n_recommendations=n_recommendations,
                             excluded_track_ids=all_excluded_ids,
-                            access_token=token,
-                            depth=depth,
-                            popularity=popularity,
-                            excluded_track_data=excluded_track_data,
+                                access_token=token,
+                                depth=depth,
+                                popularity=popularity,
+                                excluded_track_data=excluded_track_data,
                             progress_callback=progress_callback,
                             previously_generated_track_ids=previously_generated_ids
                         )
@@ -312,7 +352,11 @@ async def get_search_based_recommendations_stream(
 async def get_manual_recommendations_stream(request: ManualRecommendationRequest):
     """Get Last.fm-based recommendations for manually selected seed tracks with streaming progress"""
     try:
+        # Start overall timing
+        overall_start_time = time.time()
         print(f"🔍 BACKEND DEBUG: Manual discovery request received")
+        print(f"🕐 TIMESTAMP: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"📋 Request details:")
         print(f"  - seed_tracks: {request.seed_tracks}")
         print(f"  - seed_artists: {request.seed_artists}")
         print(f"  - seed_playlists: {request.seed_playlists}")
@@ -335,48 +379,79 @@ async def get_manual_recommendations_stream(request: ManualRecommendationRequest
             print("❌ ERROR: No seed data provided")
             raise HTTPException(status_code=400, detail="At least one seed track, artist, or playlist must be provided for recommendations")
         
+        # Initialize services
+        print(f"🔧 STEP 1: Initializing services...")
+        step_start = time.time()
+        spotify_service = SpotifyService()
+        manual_discovery_service = ManualDiscoveryService()
+        step_duration = time.time() - step_start
+        print(f"⏱️  Service initialization: {step_duration:.3f}s")
+        
+        print(f"🔧 STEP 2: Creating Spotify client...")
+        step_start = time.time()
         sp = spotify_service.create_spotify_client(request.token)
+        step_duration = time.time() - step_start
+        print(f"⏱️  Spotify client creation: {step_duration:.3f}s")
         
         # Check if token is expired
         if spotify_service.is_token_expired(sp):
             raise HTTPException(status_code=401, detail="Spotify access token has expired. Please reconnect your Spotify account.")
         
         # Test authentication
+        print(f"🔧 STEP 3: Testing authentication...")
+        step_start = time.time()
         try:
             user_info = sp.me()
             print(f"Creating streaming Last.fm-based recommendations for user: {user_info.get('display_name', 'Unknown')}")
         except Exception as auth_error:
             print(f"Authentication failed: {auth_error}")
             raise HTTPException(status_code=401, detail="Invalid or expired access token")
+        step_duration = time.time() - step_start
+        print(f"⏱️  Authentication: {step_duration:.3f}s")
         
         # Process seed data
-        time_start_track_seeds = time.time()
+        print(f"🔧 STEP 4: Processing seed data...")
+        step_start = time.time()
         seed_tracks_info = _process_seed_data(sp, request)
-        time_end_track_seeds = time.time()
-        time_track_seeds = time_end_track_seeds - time_start_track_seeds
-        print(f"Time taken to get track seeds from inputs: {time_track_seeds} seconds")
+        step_duration = time.time() - step_start
+        print(f"⏱️  Seed data processing: {step_duration:.3f}s")
         
         if not seed_tracks_info:
             raise HTTPException(status_code=400, detail="Could not retrieve any valid seed information from tracks, artists, or playlists")
         
         print(f"📊 Manual discovery seeds processed: {len(seed_tracks_info)} total seed tracks")
+        seed_details = [f"{track.get('name', 'Unknown')} by {track.get('artist', 'Unknown')}" for track in seed_tracks_info]
+        print(f"📋 Seed tracks details: {seed_details}")
         
         # Get user ID for caching
+        print(f"🔧 STEP 5: Processing exclusion logic...")
+        step_start = time.time()
         user_id = get_user_id_from_token(request.token)
+        print(f"👤 User ID: {user_id}")
         
         # Get cached excluded track IDs
         cached_excluded_ids = get_cached_excluded_tracks(user_id)
+        print(f"🗄️ Cached excluded track IDs: {len(cached_excluded_ids)}")
+        if cached_excluded_ids:
+            print(f"🗄️ Cached track IDs: {list(cached_excluded_ids)[:5]}{'...' if len(cached_excluded_ids) > 5 else ''}")
         
         # Get excluded tracks if requested
         excluded_ids = set(request.excluded_track_ids) if request.excluded_track_ids else set()
         previously_generated_ids = set(request.previously_generated_track_ids) if request.previously_generated_track_ids else set()
+        
+        print(f"🚫 Manual exclusions: {len(excluded_ids)}")
+        print(f"🔒 Previously generated exclusions: {len(previously_generated_ids)}")
         if previously_generated_ids:
-            print(f"🔒 Manual discovery: Excluding {len(previously_generated_ids)} previously generated track IDs")
+            print(f"🔒 Previously generated track IDs: {list(previously_generated_ids)[:5]}{'...' if len(previously_generated_ids) > 5 else ''}")
         
         # Combine all excluded track IDs
         all_excluded_ids = excluded_ids.union(cached_excluded_ids).union(previously_generated_ids)
-        if cached_excluded_ids:
-            print(f"🗄️ Manual discovery: Using {len(cached_excluded_ids)} cached excluded track IDs")
+        print(f"🚫 TOTAL EXCLUDED TRACK IDs: {len(all_excluded_ids)}")
+        if all_excluded_ids:
+            print(f"🚫 Sample excluded IDs: {list(all_excluded_ids)[:5]}{'...' if len(all_excluded_ids) > 5 else ''}")
+        
+        step_duration = time.time() - step_start
+        print(f"⏱️  Exclusion logic processing: {step_duration:.3f}s")
         
         excluded_track_data = []
         if request.exclude_saved_tracks:
@@ -402,31 +477,101 @@ async def get_manual_recommendations_stream(request: ManualRecommendationRequest
         
         def generate_recommendations():
             try:
-                progress_callback("Processing your selected seed tracks...")
-                progress_callback("Calling Last.fm recommendation API...")
+                print(f"🔧 STEP 6: Checking for cached recommendations...")
+                step_start = time.time()
                 
-                result = manual_discovery_service.get_multiple_seed_recommendations(
-                    seed_tracks=seed_tracks_info,
-                    n_recommendations=request.n_recommendations,
-                    excluded_track_ids=all_excluded_ids,
-                    excluded_tracks=excluded_track_data,
-                    access_token=request.token,
-                    popularity=request.popularity,
-                    depth=request.depth,
-                    progress_callback=progress_callback,
-                    previously_generated_track_ids=previously_generated_ids
-                )
+                # First, try to get recommendations from cache
+                cached_recommendations = get_cached_recommendations(user_id, request.n_recommendations)
+                
+                if len(cached_recommendations) >= request.n_recommendations:
+                    # We have enough cached recommendations!
+                    print(f"🎯 Using {len(cached_recommendations)} cached recommendations (no API call needed)")
+                    progress_callback("Retrieving recommendations from cache...")
+                    
+                    result = {
+                        'recommendations': cached_recommendations,
+                        'total_found': len(cached_recommendations),
+                        'unique_count': len(cached_recommendations),
+                        'seed_tracks_processed': len(seed_tracks_info),
+                        'generation_time': 0.001,  # Very fast since it's cached
+                        'method': 'cached_manual_discovery',
+                        'progress_messages': [],
+                        'no_more_recommendations': False
+                    }
+                    
+                    step_duration = time.time() - step_start
+                    print(f"⏱️  Cached recommendation retrieval: {step_duration:.3f}s")
+                else:
+                    # Not enough cached recommendations, need to generate more
+                    print(f"🔧 STEP 6: Generating new recommendations (cache had {len(cached_recommendations)}, need {request.n_recommendations})")
+                    
+                    progress_callback("Processing your selected seed tracks...")
+                    
+                    print(f"🎯 Calling manual_discovery_service.get_multiple_seed_recommendations()")
+                    print(f"   - seed_tracks: {len(seed_tracks_info)}")
+                    print(f"   - n_recommendations: {request.n_recommendations}")
+                    print(f"   - excluded_track_ids: {len(all_excluded_ids)}")
+                    print(f"   - popularity: {request.popularity}")
+                    
+                    result = manual_discovery_service.get_multiple_seed_recommendations(
+                        seed_tracks=seed_tracks_info,
+                        n_recommendations=request.n_recommendations,
+                        excluded_track_ids=all_excluded_ids,
+                        excluded_tracks=excluded_track_data,
+                        access_token=request.token,
+                        popularity=request.popularity,
+                        depth=request.depth,
+                        progress_callback=progress_callback,
+                        previously_generated_track_ids=previously_generated_ids
+                    )
+                    
+                    step_duration = time.time() - step_start
+                    print(f"⏱️  Recommendation generation: {step_duration:.3f}s")
                 
                 progress_callback("Analyzing and filtering recommendations...")
-                recommendations = result.get('recommendations', [])
-                progress_callback(f"Found {len(recommendations)} recommendations!")
+                all_recommendations = result.get('recommendations', [])
+                
+                print(f"📊 Generated {len(all_recommendations)} total recommendations")
+                
+                # Only shuffle if we generated new recommendations (not from cache)
+                if result.get('method') != 'cached_manual_discovery':
+                    random.shuffle(all_recommendations)
+                
+                # Add extra recommendations to the pool cache BEFORE filtering (only for newly generated recommendations)
+                print(f"🔧 STEP 7: Caching extra recommendations...")
+                step_start = time.time()
+                if result.get('method') != 'cached_manual_discovery':
+                    # Cache extras from ALL recommendations before filtering
+                    add_to_recommendation_pool(user_id, all_recommendations, request.n_recommendations)
+                else:
+                    print(f"🎯 Skipping recommendation pool caching (used cached recommendations)")
+                step_duration = time.time() - step_start
+                print(f"⏱️  Recommendation pool caching: {step_duration:.3f}s")
+                
+                # Now filter to the requested amount
+                print(f"🔧 STEP 8: Filtering to requested amount...")
+                step_start = time.time()
+                recommendations = all_recommendations[:request.n_recommendations]
+                step_duration = time.time() - step_start
+                print(f"⏱️  Filtering to {request.n_recommendations} recommendations: {step_duration:.3f}s")
+                
+                progress_callback(f"Found {len(recommendations)} recommendations!") 
                 
                 # Cache the generated track IDs for future exclusions
+                print(f"🔧 STEP 9: Caching generated track IDs...")
+                step_start = time.time()
                 if recommendations:
                     generated_track_ids = {track.get('id') for track in recommendations if track.get('id')}
+                    print(f"🗄️ Caching {len(generated_track_ids)} track IDs")
                     add_to_excluded_cache(user_id, generated_track_ids)
+                step_duration = time.time() - step_start
+                print(f"⏱️  Caching: {step_duration:.3f}s")
                 
                 progress_callback("Complete! Recommendations ready for delivery...")
+                
+                # Update the result with the filtered recommendations
+                result['recommendations'] = recommendations
+                result['unique_count'] = len(recommendations)
                 
                 progress_queue.put({'type': 'result', 'data': result})
                 
@@ -434,6 +579,8 @@ async def get_manual_recommendations_stream(request: ManualRecommendationRequest
                 progress_queue.put({'type': 'error', 'error': str(e)})
         
         # Start recommendation generation in a separate thread
+        print(f"🔧 STEP 8: Starting recommendation generation thread...")
+        thread_start = time.time()
         thread = threading.Thread(target=generate_recommendations)
         thread.start()
         
@@ -480,11 +627,12 @@ async def get_manual_recommendations_stream(request: ManualRecommendationRequest
 
 @router.post("/clear-cache")
 async def clear_recommendation_cache(token: str = Query(..., description="Spotify access token")):
-    """Clear the excluded tracks cache for a user"""
+    """Clear all caches (excluded tracks and recommendation pool) for a user"""
     try:
         user_id = get_user_id_from_token(token)
         clear_excluded_cache(user_id)
-        return {"message": f"Cache cleared for user {user_id}", "success": True}
+        clear_recommendation_pool(user_id)
+        return {"message": f"All caches cleared for user {user_id}", "success": True}
     except Exception as e:
         print(f"Error clearing cache: {e}")
         raise HTTPException(status_code=500, detail=f"Error clearing cache: {str(e)}")
@@ -495,10 +643,17 @@ async def get_cache_status(token: str = Query(..., description="Spotify access t
     try:
         user_id = get_user_id_from_token(token)
         cached_tracks = get_cached_excluded_tracks(user_id)
+        
+        # Get recommendation pool status
+        with cache_lock:
+            cached_recommendations = recommendation_pool_cache.get(user_id, [])
+        
         return {
             "user_id": user_id,
             "cached_excluded_tracks_count": len(cached_tracks),
-            "cached_track_ids": list(cached_tracks) if cached_tracks else []
+            "cached_track_ids": list(cached_tracks) if cached_tracks else [],
+            "cached_recommendations_count": len(cached_recommendations),
+            "cached_recommendations": cached_recommendations[:5] if cached_recommendations else []  # Show first 5
         }
     except Exception as e:
         print(f"Error getting cache status: {e}")
