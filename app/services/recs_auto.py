@@ -28,7 +28,8 @@ class AutoDiscoveryService:
                                          depth: int = 3, 
                                          popularity: int = 50, 
                                          excluded_track_data: List[Dict] = None,
-                                         progress_callback: callable = None) -> Dict:
+                                         progress_callback: callable = None,
+                                         previously_generated_track_ids: Set[str] = None) -> Dict:
         """
         Get auto discovery recommendations based on a mix of user's saved tracks using Last.fm
         
@@ -41,6 +42,7 @@ class AutoDiscoveryService:
             popularity (int): User's popularity preference (0-100)
             excluded_track_data (List[Dict]): All saved tracks (only used if user decides to exclude them)
             progress_callback (callable): Optional progress callback function
+            previously_generated_track_ids (Set[str]): Track IDs from previous batches to exclude
             
         Returns:
             Dict: Recommendations with metadata
@@ -92,6 +94,11 @@ class AutoDiscoveryService:
             all_recommendations = []
             seen_artists = set(artist_counts.keys())  # Exclude user's current artists
             excluded_ids = excluded_track_ids or set() # if the user decided to exclude tracks
+            
+            # Add previously generated track IDs to exclusion list to avoid duplicates across batches
+            if previously_generated_track_ids:
+                excluded_ids = excluded_ids.union(previously_generated_track_ids)
+                print(f"🔒 Added {len(previously_generated_track_ids)} previously generated track IDs to exclusion list")
             
             # Get user's saved track IDs for filtering
             user_track_ids = set()

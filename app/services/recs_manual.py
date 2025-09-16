@@ -26,7 +26,8 @@ class ManualDiscoveryService:
                                         access_token: Optional[str] = None,
                                         popularity: int = 50,
                                         depth: int = 3,
-                                        progress_callback: Optional[callable] = None) -> Dict:
+                                        progress_callback: Optional[callable] = None,
+                                        previously_generated_track_ids: Optional[Set[str]] = None) -> Dict:
         """
         Get recommendations based on multiple seed tracks using Last.fm similarity
         
@@ -39,6 +40,7 @@ class ManualDiscoveryService:
             popularity (int): User's popularity preference (0-100)
             depth (int): Analysis depth (not used in this implementation)
             progress_callback (callable): Optional progress callback function
+            previously_generated_track_ids (Set[str]): Track IDs from previous batches to exclude
             
         Returns:
             Dict: Recommendations with metadata
@@ -57,6 +59,12 @@ class ManualDiscoveryService:
             
             # Create a combined exclusion set for easier filtering
             excluded_ids = excluded_track_ids or set()
+            
+            # Add previously generated track IDs to exclusion list to avoid duplicates across batches
+            if previously_generated_track_ids:
+                excluded_ids = excluded_ids.union(previously_generated_track_ids)
+                print(f"🔒 Added {len(previously_generated_track_ids)} previously generated track IDs to exclusion list")
+            
             all_excluded_tracks = excluded_ids
             
             # Process each seed track in parallel

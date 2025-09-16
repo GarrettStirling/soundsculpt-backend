@@ -10,14 +10,45 @@ import time
 import queue
 import threading
 import random
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Set
 from pydantic import BaseModel
 
 from app.services.spotify_service import SpotifyService
 from app.services.recs_manual import ManualDiscoveryService
 from app.services.recs_auto import AutoDiscoveryService
 
+# In-memory cache for excluded track IDs by user session
+# Key: user_id (derived from token), Value: Set of excluded track IDs
+excluded_tracks_cache: Dict[str, Set[str]] = {}
+cache_lock = threading.Lock()
+
 router = APIRouter(prefix="/recommendations", tags=["Music Recommendations"])
+
+# Cache management functions
+def get_user_id_from_token(token: str) -> str:
+    """Generate a simple user ID from token for caching purposes"""
+    # Use first 8 characters of token as user identifier
+    return token[:8] if token else "anonymous"
+
+def get_cached_excluded_tracks(user_id: str) -> Set[str]:
+    """Get cached excluded track IDs for a user"""
+    with cache_lock:
+        return excluded_tracks_cache.get(user_id, set())
+
+def add_to_excluded_cache(user_id: str, track_ids: Set[str]) -> None:
+    """Add track IDs to the excluded cache for a user"""
+    with cache_lock:
+        if user_id not in excluded_tracks_cache:
+            excluded_tracks_cache[user_id] = set()
+        excluded_tracks_cache[user_id].update(track_ids)
+        print(f"🗄️ Cached {len(track_ids)} excluded track IDs for user {user_id}")
+
+def clear_excluded_cache(user_id: str) -> None:
+    """Clear the excluded cache for a user"""
+    with cache_lock:
+        if user_id in excluded_tracks_cache:
+            del excluded_tracks_cache[user_id]
+            print(f"🗑️ Cleared excluded cache for user {user_id}")
 
 # Pydantic models
 class ManualRecommendationRequest(BaseModel):
@@ -27,6 +58,7 @@ class ManualRecommendationRequest(BaseModel):
     popularity: Optional[int] = 50
     n_recommendations: Optional[int] = 20
     excluded_track_ids: Optional[List[str]] = []
+    previously_generated_track_ids: Optional[List[str]] = []  # Track IDs from previous batches to exclude
     token: Optional[str] = None
     depth: Optional[int] = 3
     exclude_saved_tracks: Optional[bool] = False
@@ -114,6 +146,7 @@ async def get_search_based_recommendations_stream(
     analysis_track_count: int = Query(1000, ge=50, le=5000, description="Number of recent tracks to analyze"),
     generation_seed: int = Query(0, ge=0, description="Generation seed for variation (0=first generation, 1+=subsequent)"),
     exclude_track_ids: Optional[str] = Query(None, description="Comma-separated list of track IDs to exclude"),
+    previously_generated_track_ids: Optional[str] = Query(None, description="Comma-separated list of track IDs from previous batches to exclude"),
     exclude_saved_tracks: bool = Query(False, description="Whether to exclude user's saved tracks"),
 ):
     """Streaming version of auto discovery with real-time progress updates"""
@@ -133,6 +166,23 @@ async def get_search_based_recommendations_stream(
         excluded_ids = set()
         if exclude_track_ids:
             excluded_ids = set(exclude_track_ids.split(','))
+        
+        # Get user ID for caching
+        user_id = get_user_id_from_token(token)
+        
+        # Get cached excluded track IDs
+        cached_excluded_ids = get_cached_excluded_tracks(user_id)
+        
+        # Parse previously generated track IDs
+        previously_generated_ids = set()
+        if previously_generated_track_ids:
+            previously_generated_ids = set(previously_generated_track_ids.split(','))
+            print(f"🔒 Auto discovery: Excluding {len(previously_generated_ids)} previously generated track IDs")
+        
+        # Combine all excluded track IDs
+        all_excluded_ids = excluded_ids.union(cached_excluded_ids).union(previously_generated_ids)
+        if cached_excluded_ids:
+            print(f"🗄️ Auto discovery: Using {len(cached_excluded_ids)} cached excluded track IDs")
         
         # Build user preferences
         depth = analysis_track_count
@@ -183,12 +233,13 @@ async def get_search_based_recommendations_stream(
                         result = auto_discovery_service.get_auto_discovery_recommendations(
                             analysis_tracks=analysis_tracks,
                             n_recommendations=n_recommendations,
-                            excluded_track_ids=excluded_ids,
+                            excluded_track_ids=all_excluded_ids,
                             access_token=token,
                             depth=depth,
                             popularity=popularity,
                             excluded_track_data=excluded_track_data,
-                            progress_callback=progress_callback
+                            progress_callback=progress_callback,
+                            previously_generated_track_ids=previously_generated_ids
                         )
                         
                         rec_end_time = time.time()
@@ -198,15 +249,13 @@ async def get_search_based_recommendations_stream(
 
                         progress_callback("Analyzing and filtering recommendations...")
                         
-                        # Add pool logic and final progress message
                         recommendations = result.get('recommendations', [])
                         progress_callback(f"Found {len(recommendations)} recommendations!")
                         
-                        if len(recommendations) > n_recommendations:
-                            extra_recommendations = recommendations[n_recommendations:]
-                            progress_callback(f"Caching {len(extra_recommendations)} extra recommendations for instant batches...")
-                        else:
-                            progress_callback("No extra recommendations to cache for pool")
+                        # Cache the generated track IDs for future exclusions
+                        if recommendations:
+                            generated_track_ids = {track.get('id') for track in recommendations if track.get('id')}
+                            add_to_excluded_cache(user_id, generated_track_ids)
                         
                         progress_callback("Complete! Recommendations ready for delivery...")
                         
@@ -270,6 +319,7 @@ async def get_manual_recommendations_stream(request: ManualRecommendationRequest
         print(f"  - n_recommendations: {request.n_recommendations}")
         print(f"  - popularity: {request.popularity}")
         print(f"  - excluded_track_ids: {request.excluded_track_ids}")
+        print(f"  - previously_generated_track_ids: {request.previously_generated_track_ids}")
         print(f"  - exclude_saved_tracks: {request.exclude_saved_tracks}")
         print(f"  - token length: {len(request.token) if request.token else 0}")
         
@@ -311,8 +361,23 @@ async def get_manual_recommendations_stream(request: ManualRecommendationRequest
         
         print(f"📊 Manual discovery seeds processed: {len(seed_tracks_info)} total seed tracks")
         
+        # Get user ID for caching
+        user_id = get_user_id_from_token(request.token)
+        
+        # Get cached excluded track IDs
+        cached_excluded_ids = get_cached_excluded_tracks(user_id)
+        
         # Get excluded tracks if requested
         excluded_ids = set(request.excluded_track_ids) if request.excluded_track_ids else set()
+        previously_generated_ids = set(request.previously_generated_track_ids) if request.previously_generated_track_ids else set()
+        if previously_generated_ids:
+            print(f"🔒 Manual discovery: Excluding {len(previously_generated_ids)} previously generated track IDs")
+        
+        # Combine all excluded track IDs
+        all_excluded_ids = excluded_ids.union(cached_excluded_ids).union(previously_generated_ids)
+        if cached_excluded_ids:
+            print(f"🗄️ Manual discovery: Using {len(cached_excluded_ids)} cached excluded track IDs")
+        
         excluded_track_data = []
         if request.exclude_saved_tracks:
             try:
@@ -343,21 +408,23 @@ async def get_manual_recommendations_stream(request: ManualRecommendationRequest
                 result = manual_discovery_service.get_multiple_seed_recommendations(
                     seed_tracks=seed_tracks_info,
                     n_recommendations=request.n_recommendations,
-                    excluded_track_ids=excluded_ids,
+                    excluded_track_ids=all_excluded_ids,
                     excluded_tracks=excluded_track_data,
                     access_token=request.token,
                     popularity=request.popularity,
                     depth=request.depth,
-                    progress_callback=progress_callback
+                    progress_callback=progress_callback,
+                    previously_generated_track_ids=previously_generated_ids
                 )
                 
                 progress_callback("Analyzing and filtering recommendations...")
                 recommendations = result.get('recommendations', [])
-                if len(recommendations) > request.n_recommendations:
-                    extra_recommendations = recommendations[request.n_recommendations:]
-                    progress_callback(f"Caching {len(extra_recommendations)} extra recommendations for instant batches...")
-                else:
-                    progress_callback("No extra recommendations to cache for pool")
+                progress_callback(f"Found {len(recommendations)} recommendations!")
+                
+                # Cache the generated track IDs for future exclusions
+                if recommendations:
+                    generated_track_ids = {track.get('id') for track in recommendations if track.get('id')}
+                    add_to_excluded_cache(user_id, generated_track_ids)
                 
                 progress_callback("Complete! Recommendations ready for delivery...")
                 
@@ -410,6 +477,32 @@ async def get_manual_recommendations_stream(request: ManualRecommendationRequest
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@router.post("/clear-cache")
+async def clear_recommendation_cache(token: str = Query(..., description="Spotify access token")):
+    """Clear the excluded tracks cache for a user"""
+    try:
+        user_id = get_user_id_from_token(token)
+        clear_excluded_cache(user_id)
+        return {"message": f"Cache cleared for user {user_id}", "success": True}
+    except Exception as e:
+        print(f"Error clearing cache: {e}")
+        raise HTTPException(status_code=500, detail=f"Error clearing cache: {str(e)}")
+
+@router.get("/cache-status")
+async def get_cache_status(token: str = Query(..., description="Spotify access token")):
+    """Get the current cache status for a user"""
+    try:
+        user_id = get_user_id_from_token(token)
+        cached_tracks = get_cached_excluded_tracks(user_id)
+        return {
+            "user_id": user_id,
+            "cached_excluded_tracks_count": len(cached_tracks),
+            "cached_track_ids": list(cached_tracks) if cached_tracks else []
+        }
+    except Exception as e:
+        print(f"Error getting cache status: {e}")
+        raise HTTPException(status_code=500, detail=f"Error getting cache status: {str(e)}")
 
 @router.post("/create-playlist", response_model=PlaylistCreationResponse)
 async def create_playlist_from_recommendations(
