@@ -31,9 +31,26 @@ router = APIRouter(prefix="/recommendations", tags=["Music Recommendations"])
 
 # Cache management functions
 def get_user_id_from_token(token: str) -> str:
-    """Generate a simple user ID from token for caching purposes"""
-    # Use first 8 characters of token as user identifier
-    return token[:8] if token else "anonymous"
+    """Generate a proper user ID from token for caching purposes"""
+    try:
+        # Create a fresh Spotify service instance to avoid cross-user contamination
+        spotify_service = SpotifyService()
+        # Create fresh Spotify service instance
+        spotify_service = SpotifyService()
+        sp = spotify_service.create_spotify_client(token)
+        user_profile = spotify_service.get_user_profile(sp)
+        if user_profile and user_profile.get('id'):
+            return user_profile['id']  # Use actual Spotify user ID
+        else:
+            # Fallback to token hash if user profile fails
+            import hashlib
+            return hashlib.md5(token.encode()).hexdigest()[:16]
+    except Exception as e:
+        print(f"Error getting user ID from token: {e}")
+        print("Using token hash fallback to avoid 403 errors")
+        # Fallback to token hash
+        import hashlib
+        return hashlib.md5(token.encode()).hexdigest()[:16]
 
 def get_cached_excluded_tracks(user_id: str) -> Set[str]:
     """Get cached excluded track IDs for a user"""
@@ -90,6 +107,16 @@ def clear_recommendation_pool(user_id: str) -> None:
             del recommendation_pool_cache[user_id]
             print(f"🗑️ Cleared recommendation pool cache for user {user_id}")
 
+def clear_all_user_caches(user_id: str) -> None:
+    """Clear all caches for a specific user"""
+    with cache_lock:
+        if user_id in excluded_tracks_cache:
+            del excluded_tracks_cache[user_id]
+            print(f"🗑️ Cleared excluded tracks cache for user {user_id}")
+        if user_id in recommendation_pool_cache:
+            del recommendation_pool_cache[user_id]
+            print(f"🗑️ Cleared recommendation pool cache for user {user_id}")
+
 # Pydantic models
 class ManualRecommendationRequest(BaseModel):
     seed_tracks: Optional[List[str]] = []
@@ -117,8 +144,7 @@ class PlaylistCreationResponse(BaseModel):
     message: str
     tracks_added: Optional[int] = None
 
-# Initialize services
-spotify_service = SpotifyService()
+# Initialize services - create fresh instances per request to avoid cross-user contamination
 manual_discovery_service = ManualDiscoveryService()
 auto_discovery_service = AutoDiscoveryService()
 
@@ -129,6 +155,8 @@ async def get_collection_size(token: str = Query(..., description="Spotify acces
         if not token or len(token) < 10:
             raise HTTPException(status_code=400, detail="Invalid or missing access token")
         
+        # Create fresh Spotify service instance
+        spotify_service = SpotifyService()
         sp = spotify_service.create_spotify_client(token)
         
         # Test authentication
@@ -197,6 +225,8 @@ async def get_search_based_recommendations_stream(
         if not token or len(token) < 10:
             raise HTTPException(status_code=400, detail="Valid Spotify access token required")
         
+        # Create fresh Spotify service instance
+        spotify_service = SpotifyService()
         sp = spotify_service.create_spotify_client(token)
         
         # Check if token is expired
@@ -247,7 +277,8 @@ async def get_search_based_recommendations_stream(
                         analysis_tracks, _, excluded_track_data = spotify_service.get_user_saved_tracks_parallel(
                             sp_client=sp,
                             max_tracks=analysis_track_count,
-                            exclude_tracks=exclude_saved_tracks
+                            exclude_tracks=exclude_saved_tracks,
+                            access_token=token
                         )
                         
                         # progress_callback(f"Fetched {len(analysis_tracks)} recent tracks...")
@@ -375,7 +406,7 @@ async def get_manual_recommendations_stream(request: ManualRecommendationRequest
             print("❌ ERROR: No seed data provided")
             raise HTTPException(status_code=400, detail="At least one seed track, artist, or playlist must be provided for recommendations")
         
-        # Initialize services
+        # Initialize services - create fresh instances per request
         spotify_service = SpotifyService()
         manual_discovery_service = ManualDiscoveryService()
         sp = spotify_service.create_spotify_client(request.token)
@@ -417,7 +448,8 @@ async def get_manual_recommendations_stream(request: ManualRecommendationRequest
                 _, excluded_ids, excluded_track_data = spotify_service.get_user_saved_tracks_parallel(
                     sp_client=sp,
                     max_tracks=None,
-                    exclude_tracks=True
+                    exclude_tracks=True,
+                    access_token=request.token
                 )
                 print(f"Found {len(excluded_ids)} saved tracks to exclude")
             except Exception as e:
@@ -618,8 +650,7 @@ async def clear_recommendation_cache(token: str = Query(..., description="Spotif
     """Clear all caches (excluded tracks and recommendation pool) for a user"""
     try:
         user_id = get_user_id_from_token(token)
-        clear_excluded_cache(user_id)
-        clear_recommendation_pool(user_id)
+        clear_all_user_caches(user_id)
         return {"message": f"All caches cleared for user {user_id}", "success": True}
     except Exception as e:
         print(f"Error clearing cache: {e}")
@@ -658,6 +689,8 @@ async def create_playlist_from_recommendations(
         
         # Validate access token
         try:
+            # Create fresh Spotify service instance
+            spotify_service = SpotifyService()
             sp = spotify_service.create_spotify_client(token)
             user_info = sp.me()
             print(f"Creating playlist for user: {user_info.get('display_name', 'Unknown')}")
