@@ -129,26 +129,41 @@ class ManualDiscoveryService:
             print(f"⏱️  Filtering and deduplication: {step_duration:.3f}s")
             print(f"🎯 Final unique recommendations: {len(unique_recommendations)}")
             
+            # Filter to one song per artist (manual discovery only)
+            step_start = time.time()
+            artist_filtered_recommendations = []
+            seen_artists = set()
+            
+            for rec in unique_recommendations:
+                artist = rec.get('artist', 'Unknown')
+                if artist not in seen_artists:
+                    artist_filtered_recommendations.append(rec)
+                    seen_artists.add(artist)
+            
+            step_duration = time.time() - step_start
+            print(f"⏱️  Artist filtering (one per artist): {step_duration:.3f}s")
+            print(f"🎯 After artist filtering: {len(artist_filtered_recommendations)} recommendations")
+            
             # Log final recommendations
-            if unique_recommendations:
-                print(f"📋 FINAL RECOMMENDATIONS:")
-                for i, rec in enumerate(unique_recommendations[:5]):
+            if artist_filtered_recommendations:
+                print(f"📋 FINAL RECOMMENDATIONS (one per artist):")
+                for i, rec in enumerate(artist_filtered_recommendations[:5]):
                     print(f"   {i+1}. {rec.get('name', 'Unknown')} by {rec.get('artist', 'Unknown')}")
-                if len(unique_recommendations) > 5:
-                    print(f"   ... and {len(unique_recommendations) - 5} more")
+                if len(artist_filtered_recommendations) > 5:
+                    print(f"   ... and {len(artist_filtered_recommendations) - 5} more")
             
             service_duration = time.time() - service_start_time
             print(f"⏱️  TOTAL SERVICE DURATION: {service_duration:.3f}s")
             
             return {
-                'recommendations': unique_recommendations,
+                'recommendations': artist_filtered_recommendations,
                 'total_found': len(all_recommendations),
-                'unique_count': len(unique_recommendations),
+                'unique_count': len(artist_filtered_recommendations),
                 'seed_tracks_processed': len(seed_tracks),
                 'generation_time': service_duration,
                 'method': 'lastfm_multiple_seed',
                 'progress_messages': self.progress_messages,
-                'no_more_recommendations': len(unique_recommendations) == 0
+                'no_more_recommendations': len(artist_filtered_recommendations) == 0
             }
             
         except Exception as e:
