@@ -46,7 +46,7 @@ async def callback(code: str = Query(...), state: str = Query(None)):
         
         if not token_info:
             print("AUTH ERROR: Token exchange failed - token_info is None")
-            return RedirectResponse(url="http://127.0.0.1:5173/?error=auth_failed")
+            return RedirectResponse(url="http://127.0.0.1:5173/?error=auth_failed")  # Will be updated when you deploy frontend
         
         # Redirect to frontend with success and access token
         access_token = token_info['access_token']
@@ -67,7 +67,8 @@ async def callback(code: str = Query(...), state: str = Query(None)):
         
         # Try multiple possible frontend URLs
         frontend_urls = [
-            "image.png"
+            "http://127.0.0.1:5173",  # Local development
+            "https://your-frontend.vercel.app"  # Production - replace with your actual Vercel URL
         ]
         
         # Use the first URL for now, but log all options
