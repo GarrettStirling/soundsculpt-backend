@@ -68,7 +68,7 @@ async def callback(code: str = Query(...), state: str = Query(None)):
         # Try multiple possible frontend URLs
         frontend_urls = [
             "http://127.0.0.1:5173",  # Local development
-            "https://your-frontend.vercel.app"  # Production - replace with your actual Vercel URL
+            "https://soundsculpt-frontend.vercel.app"  # Production Vercel URL
         ]
         
         # Use the first URL for now, but log all options
