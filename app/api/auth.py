@@ -8,6 +8,9 @@ import hashlib
 import random
 import uuid
 
+# Get frontend URL from environment variable
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://127.0.0.1:5173")
+
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 # Note: We'll create fresh Spotify service instances per request to avoid cross-user contamination
@@ -69,7 +72,7 @@ async def callback(code: str = Query(...), state: str = Query(None)):
         
         if not token_info:
             print("AUTH ERROR: Token exchange failed - token_info is None")
-            return RedirectResponse(url="http://127.0.0.1:5173/?error=auth_failed")  # Will be updated when you deploy frontend
+            return RedirectResponse(url=f"{FRONTEND_URL}/?error=auth_failed")
         
         # Clear ALL existing caches BEFORE redirecting to prevent cross-user contamination
         # This ensures that when a new user logs in, they don't see previous users' data
@@ -117,14 +120,8 @@ async def callback(code: str = Query(...), state: str = Query(None)):
         except Exception as e:
             print(f"⚠️ Could not get user ID for logging: {e}")
         
-        # Try multiple possible frontend URLs
-        frontend_urls = [
-            "http://127.0.0.1:5173",  # Local development
-            "https://soundsculpt-frontend.vercel.app"  # Production Vercel URL
-        ]
-        
-        # Use the first URL for now, but log all options
-        redirect_url = f"{frontend_urls[0]}/?success=true&access_token={access_token}"
+        # Use configurable frontend URL
+        redirect_url = f"{FRONTEND_URL}/?success=true&access_token={access_token}"
         print(f"AUTH SUCCESS: Redirecting to: {redirect_url}")
         
         # Store the token temporarily and redirect to frontend
@@ -176,7 +173,7 @@ async def callback(code: str = Query(...), state: str = Query(None)):
             traceback.print_exc()
             # Continue with redirect even if token storage fails
         
-        redirect_url = f"http://127.0.0.1:5173/?auth_success=true&token_id={token_id}"
+        redirect_url = f"{FRONTEND_URL}/?auth_success=true&token_id={token_id}"
         print(f"AUTH: Redirecting to {redirect_url}")
         
         return RedirectResponse(url=redirect_url, status_code=302)
@@ -188,7 +185,7 @@ async def callback(code: str = Query(...), state: str = Query(None)):
         traceback.print_exc()
         
         # Return a more detailed error page for debugging
-        return RedirectResponse(url=f"http://127.0.0.1:5173/?error=auth_failed&details={str(e)[:100]}")
+        return RedirectResponse(url=f"{FRONTEND_URL}/?error=auth_failed&details={str(e)[:100]}")
 
 @router.get("/debug")
 async def debug_auth():
@@ -223,13 +220,13 @@ async def debug_auth_url():
 @router.get("/test-redirect")
 async def test_redirect():
     """Test endpoint to verify redirect functionality"""
-    return RedirectResponse(url="http://127.0.0.1:5173/?test=success")
+    return RedirectResponse(url=f"{FRONTEND_URL}/?test=success")
 
 @router.get("/test-token")
 async def test_token():
     """Test endpoint to verify token passing"""
     test_token = "test123"
-    redirect_url = f"http://127.0.0.1:5173/?success=true&access_token={test_token}"
+    redirect_url = f"{FRONTEND_URL}/?success=true&access_token={test_token}"
     print(f"TEST: Redirecting to {redirect_url}")
     return RedirectResponse(url=redirect_url, status_code=302)
 

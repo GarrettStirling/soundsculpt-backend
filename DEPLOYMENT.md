@@ -9,6 +9,7 @@ Your backend needs these environment variables. Set them in Railway's environmen
 SPOTIFY_CLIENT_ID=your_spotify_client_id_here
 SPOTIFY_CLIENT_SECRET=your_spotify_client_secret_here
 SPOTIFY_REDIRECT_URI=https://your-backend.railway.app/auth/callback
+FRONTEND_URL=https://your-frontend.vercel.app
 LASTFM_API_KEY=your_lastfm_api_key_here
 LASTFM_SHARED_SECRET=your_lastfm_shared_secret_here
 YOUTUBE_API_KEY=your_youtube_api_key_here
