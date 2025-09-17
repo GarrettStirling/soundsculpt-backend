@@ -36,7 +36,18 @@ class SpotifyService:
     
     def get_auth_url(self) -> str:
         """Get the authorization URL for Spotify login"""
-        return self.sp_oauth.get_authorize_url(state="state")
+        import hashlib
+        import time
+        import random
+        import uuid
+        
+        # Generate a unique state parameter for each authentication request
+        # This prevents CSRF attacks and ensures each auth request is unique
+        unique_string = f"{time.time()}{random.random()}{uuid.uuid4()}"
+        state = hashlib.md5(unique_string.encode()).hexdigest()[:16]
+        
+        print(f"🔐 AUTH URL: Generated unique state: {state}")
+        return self.sp_oauth.get_authorize_url(state=state)
     
     def get_access_token(self, code: str) -> Optional[Dict]:
         """Exchange authorization code for access token"""
@@ -451,6 +462,16 @@ class SpotifyService:
             print(f"Using fallback user ID due to error: {fallback_id}")
             return fallback_id
     
+    def get_user_id_from_token(self, access_token: str) -> Optional[str]:
+        """Get user ID from access token"""
+        try:
+            sp = self.create_spotify_client(access_token)
+            user_profile = sp.current_user()
+            return user_profile.get('id') if user_profile else None
+        except Exception as e:
+            print(f"Error getting user ID from token: {e}")
+            return None
+    
     def clear_user_cache(self, user_id: str) -> None:
         """Clear all cached data for a specific user"""
         if user_id in self._user_cached_saved_tracks:
@@ -458,6 +479,21 @@ class SpotifyService:
         if user_id in self._user_cached_timestamps:
             del self._user_cached_timestamps[user_id]
         print(f"Cleared Spotify service cache for user {user_id}")
+    
+    def clear_all_caches(self) -> None:
+        """Clear all cached data for all users (safety measure)"""
+        cache_count_before = len(self._user_cached_saved_tracks) + len(self._user_cached_timestamps)
+        self._user_cached_saved_tracks.clear()
+        self._user_cached_timestamps.clear()
+        print(f"🧹 Cleared all Spotify service caches (had {cache_count_before} cached entries)")
+    
+    def get_cache_info(self) -> Dict:
+        """Get information about current cache state for debugging"""
+        return {
+            "cached_users": list(self._user_cached_saved_tracks.keys()),
+            "timestamp_users": list(self._user_cached_timestamps.keys()),
+            "total_cached_users": len(self._user_cached_saved_tracks)
+        }
     
     
     def get_user_playlists(self, sp: spotipy.Spotify) -> List[Dict]:

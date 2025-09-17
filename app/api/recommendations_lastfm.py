@@ -107,15 +107,22 @@ def clear_recommendation_pool(user_id: str) -> None:
             del recommendation_pool_cache[user_id]
             print(f"🗑️ Cleared recommendation pool cache for user {user_id}")
 
-def clear_all_user_caches(user_id: str) -> None:
-    """Clear all caches for a specific user"""
+def clear_all_user_caches(user_id: str = None) -> None:
+    """Clear all caches for a specific user, or all users if user_id is None"""
     with cache_lock:
-        if user_id in excluded_tracks_cache:
-            del excluded_tracks_cache[user_id]
-            print(f"🗑️ Cleared excluded tracks cache for user {user_id}")
-        if user_id in recommendation_pool_cache:
-            del recommendation_pool_cache[user_id]
-            print(f"🗑️ Cleared recommendation pool cache for user {user_id}")
+        if user_id is None:
+            # Clear all caches for all users
+            excluded_tracks_cache.clear()
+            recommendation_pool_cache.clear()
+            print("🗑️ Cleared all excluded tracks and recommendation pool caches")
+        else:
+            # Clear caches for specific user
+            if user_id in excluded_tracks_cache:
+                del excluded_tracks_cache[user_id]
+                print(f"🗑️ Cleared excluded tracks cache for user {user_id}")
+            if user_id in recommendation_pool_cache:
+                del recommendation_pool_cache[user_id]
+                print(f"🗑️ Cleared recommendation pool cache for user {user_id}")
 
 # Pydantic models
 class ManualRecommendationRequest(BaseModel):
@@ -238,8 +245,11 @@ async def get_search_based_recommendations_stream(
         if exclude_track_ids:
             excluded_ids = set(exclude_track_ids.split(','))
         
-        # Get user ID for caching
+        # Get user ID for caching and validation
         user_id = get_user_id_from_token(token)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Could not retrieve user ID from token")
+        print(f"🔐 Auto-discovery authenticated user: {user_id}")
         
         # Get cached excluded track IDs
         cached_excluded_ids = get_cached_excluded_tracks(user_id)
@@ -415,10 +425,13 @@ async def get_manual_recommendations_stream(request: ManualRecommendationRequest
         if spotify_service.is_token_expired(sp):
             raise HTTPException(status_code=401, detail="Spotify access token has expired. Please reconnect your Spotify account.")
         
-        # Test authentication
+        # Test authentication and get user info
         try:
             user_info = sp.me()
-            user_id = user_info.get('id', 'unknown')
+            user_id = user_info.get('id')
+            if not user_id:
+                raise HTTPException(status_code=401, detail="Could not retrieve user ID from token")
+            print(f"🔐 Authenticated user: {user_id}")
         except Exception as auth_error:
             raise HTTPException(status_code=401, detail="Invalid or expired access token")
         
