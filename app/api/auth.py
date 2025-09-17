@@ -11,6 +11,10 @@ import uuid
 # Get frontend URL from environment variable
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://127.0.0.1:5173")
 
+# Debug logging for environment variable
+print(f"🔍 BACKEND: FRONTEND_URL environment variable: {os.getenv('FRONTEND_URL')}")
+print(f"🔍 BACKEND: Final FRONTEND_URL being used: {FRONTEND_URL}")
+
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 # Note: We'll create fresh Spotify service instances per request to avoid cross-user contamination
@@ -74,7 +78,7 @@ async def callback(code: str = Query(...), state: str = Query(None)):
             print("AUTH ERROR: Token exchange failed - token_info is None")
             return RedirectResponse(url=f"{FRONTEND_URL}/?error=auth_failed")
         
-        # Clear ALL existing caches BEFORE redirecting to prevent cross-user contamination
+        # CRITICAL FIX: Clear ALL existing caches BEFORE redirecting to prevent cross-user contamination
         # This ensures that when a new user logs in, they don't see previous users' data
         print("🧹 PRE-AUTH: Clearing all user caches to prevent cross-user data contamination...")
         
@@ -83,10 +87,10 @@ async def callback(code: str = Query(...), state: str = Query(None)):
             cache_info_before = spotify_service.get_cache_info()
             print(f"📊 Cache state before clearing: {cache_info_before}")
             
-            # Clear all Spotify service caches
+            # CRITICAL FIX: Clear all Spotify service caches synchronously
             spotify_service.clear_all_caches()
             
-            # Also clear all recommendation caches
+            # CRITICAL FIX: Clear all recommendation caches synchronously
             from app.api.recommendations_lastfm import clear_all_user_caches
             clear_all_user_caches(None)  # Clear all users' caches
             
@@ -100,7 +104,7 @@ async def callback(code: str = Query(...), state: str = Query(None)):
             print(f"❌ PRE-AUTH: Error during cache clearing: {cache_error}")
             import traceback
             traceback.print_exc()
-            # As a last resort, clear all caches
+            # CRITICAL FIX: Ensure caches are cleared even if errors occur
             try:
                 spotify_service.clear_all_caches()
                 from app.api.recommendations_lastfm import clear_all_user_caches
@@ -108,6 +112,14 @@ async def callback(code: str = Query(...), state: str = Query(None)):
                 print("🧹 PRE-AUTH: Cleared all caches as fallback")
             except Exception as fallback_error:
                 print(f"❌ PRE-AUTH: Failed to clear caches even as fallback: {fallback_error}")
+                # Force clear the global caches directly
+                try:
+                    import app.api.recommendations_lastfm as recs_module
+                    recs_module.excluded_tracks_cache.clear()
+                    recs_module.recommendation_pool_cache.clear()
+                    print("🧹 PRE-AUTH: Force cleared caches directly")
+                except Exception as force_error:
+                    print(f"❌ PRE-AUTH: Force clear also failed: {force_error}")
         
         # Now redirect to frontend with success and access token
         access_token = token_info['access_token']
@@ -298,19 +310,35 @@ async def clear_all_caches():
     try:
         print("🧹 MANUAL: Clearing all user caches via API endpoint...")
         
-        # Clear all Spotify service caches
+        # CRITICAL FIX: Clear all Spotify service caches
         spotify_service = SpotifyService()
         spotify_service.clear_all_caches()
         
-        # Clear all recommendation caches
+        # CRITICAL FIX: Clear all recommendation caches
         from app.api.recommendations_lastfm import clear_all_user_caches
         clear_all_user_caches(None)
+        
+        # CRITICAL FIX: Also clear the global temp tokens to prevent cross-user contamination
+        global temp_tokens
+        if 'temp_tokens' in globals():
+            temp_tokens.clear()
+            print("🧹 MANUAL: Cleared temp tokens storage")
         
         print("✅ MANUAL: Successfully cleared all user caches via API")
         return {"success": True, "message": "All caches cleared successfully"}
         
     except Exception as e:
         print(f"❌ MANUAL: Error clearing caches via API: {e}")
+        # CRITICAL FIX: Force clear caches even if errors occur
+        try:
+            import app.api.recommendations_lastfm as recs_module
+            recs_module.excluded_tracks_cache.clear()
+            recs_module.recommendation_pool_cache.clear()
+            if 'temp_tokens' in globals():
+                temp_tokens.clear()
+            print("🧹 MANUAL: Force cleared all caches as fallback")
+        except Exception as force_error:
+            print(f"❌ MANUAL: Force clear also failed: {force_error}")
         return {"success": False, "error": str(e)}
 
 @router.get("/debug-token-user")

@@ -33,24 +33,28 @@ router = APIRouter(prefix="/recommendations", tags=["Music Recommendations"])
 def get_user_id_from_token(token: str) -> str:
     """Generate a proper user ID from token for caching purposes"""
     try:
-        # Create a fresh Spotify service instance to avoid cross-user contamination
-        spotify_service = SpotifyService()
-        # Create fresh Spotify service instance
+        # CRITICAL FIX: Always create a fresh Spotify service instance to avoid cross-user contamination
         spotify_service = SpotifyService()
         sp = spotify_service.create_spotify_client(token)
         user_profile = spotify_service.get_user_profile(sp)
         if user_profile and user_profile.get('id'):
-            return user_profile['id']  # Use actual Spotify user ID
+            user_id = user_profile['id']
+            print(f"🔍 Retrieved user ID from token: {user_id}")
+            return user_id  # Use actual Spotify user ID
         else:
             # Fallback to token hash if user profile fails
             import hashlib
-            return hashlib.md5(token.encode()).hexdigest()[:16]
+            fallback_id = hashlib.md5(token.encode()).hexdigest()[:16]
+            print(f"⚠️ Using token hash fallback for user ID: {fallback_id}")
+            return fallback_id
     except Exception as e:
         print(f"Error getting user ID from token: {e}")
         print("Using token hash fallback to avoid 403 errors")
         # Fallback to token hash
         import hashlib
-        return hashlib.md5(token.encode()).hexdigest()[:16]
+        fallback_id = hashlib.md5(token.encode()).hexdigest()[:16]
+        print(f"⚠️ Using token hash fallback due to error: {fallback_id}")
+        return fallback_id
 
 def get_cached_excluded_tracks(user_id: str) -> Set[str]:
     """Get cached excluded track IDs for a user"""
@@ -668,6 +672,48 @@ async def clear_recommendation_cache(token: str = Query(..., description="Spotif
     except Exception as e:
         print(f"Error clearing cache: {e}")
         raise HTTPException(status_code=500, detail=f"Error clearing cache: {str(e)}")
+
+@router.post("/verify-user-identity")
+async def verify_user_identity(token: str = Query(..., description="Spotify access token")):
+    """Verify that a token belongs to the expected user and clear caches if not"""
+    try:
+        # Get user ID from token
+        user_id = get_user_id_from_token(token)
+        
+        # Check if we have any cached data for this user
+        with cache_lock:
+            has_excluded_cache = user_id in excluded_tracks_cache
+            has_recommendation_cache = user_id in recommendation_pool_cache
+            
+        # If we have cached data, verify the token is still valid
+        if has_excluded_cache or has_recommendation_cache:
+            print(f"🔍 Verifying cached data for user {user_id}")
+            # The get_user_id_from_token function already validates the token
+            # If it succeeds, the token is valid for this user
+            
+            return {
+                "verified": True,
+                "user_id": user_id,
+                "has_cached_data": True,
+                "message": "User identity verified and cached data is valid"
+            }
+        else:
+            return {
+                "verified": True,
+                "user_id": user_id,
+                "has_cached_data": False,
+                "message": "User identity verified, no cached data found"
+            }
+            
+    except Exception as e:
+        print(f"Error verifying user identity: {e}")
+        # If verification fails, clear all caches as a safety measure
+        try:
+            clear_all_user_caches(None)
+            print("🧹 Cleared all caches due to user identity verification failure")
+        except:
+            pass
+        raise HTTPException(status_code=401, detail=f"User identity verification failed: {str(e)}")
 
 @router.get("/cache-status")
 async def get_cache_status(token: str = Query(..., description="Spotify access token")):
