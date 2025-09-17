@@ -6,14 +6,15 @@ import os
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
-# Initialize Spotify service
-spotify_service = SpotifyService()
+# Note: We'll create fresh Spotify service instances per request to avoid cross-user contamination
 
 
 @router.get("/login")
 async def login():
     """Initiate Spotify OAuth login and redirect to Spotify"""
     try:
+        # Create fresh Spotify service instance
+        spotify_service = SpotifyService()
         auth_url = spotify_service.get_auth_url()
         return RedirectResponse(url=auth_url)
     except Exception as e:
@@ -23,6 +24,8 @@ async def login():
 async def login_redirect():
     """Redirect to Spotify OAuth login"""
     try:
+        # Create fresh Spotify service instance
+        spotify_service = SpotifyService()
         auth_url = spotify_service.get_auth_url()
         return RedirectResponse(url=auth_url)
     except Exception as e:
@@ -35,6 +38,8 @@ async def callback(code: str = Query(...), state: str = Query(None)):
         print(f"AUTH CALLBACK: Received code: {code[:20]}...")
         print(f"AUTH CALLBACK: State: {state}")
         
+        # Create fresh Spotify service instance
+        spotify_service = SpotifyService()
         # Exchange code for access token
         token_info = spotify_service.get_access_token(code)
         print(f"AUTH CALLBACK: Token info result: {token_info}")
@@ -46,6 +51,19 @@ async def callback(code: str = Query(...), state: str = Query(None)):
         # Redirect to frontend with success and access token
         access_token = token_info['access_token']
         print(f"AUTH SUCCESS: Redirecting with token: {access_token[:20]}...")
+        
+        # Clear any existing caches for this user to ensure fresh data
+        try:
+            user_id = spotify_service.get_user_id_from_token(access_token)
+            spotify_service.clear_user_cache(user_id)
+            print(f"Cleared Spotify service cache for new user: {user_id}")
+            
+            # Also clear recommendation caches
+            from app.api.recommendations_lastfm import clear_all_user_caches
+            clear_all_user_caches(user_id)
+            print(f"Cleared recommendation caches for new user: {user_id}")
+        except Exception as cache_error:
+            print(f"Warning: Could not clear caches: {cache_error}")
         
         # Try multiple possible frontend URLs
         frontend_urls = [
@@ -96,6 +114,8 @@ async def callback(code: str = Query(...), state: str = Query(None)):
 @router.get("/debug")
 async def debug_auth():
     """Debug endpoint to check authentication configuration"""
+    # Create fresh Spotify service instance
+    spotify_service = SpotifyService()
     return {
         "client_id": spotify_service.client_id,
         "client_secret": "***" if spotify_service.client_secret else None,
@@ -141,13 +161,15 @@ async def validate_token(token_data: Dict[str, str]):
         if not access_token:
             raise HTTPException(status_code=400, detail="Access token required")
         
-        # Create Spotify client and test the token
-        sp = spotify_service.create_spotify_client(access_token)
-        user_profile = spotify_service.get_user_profile(sp)
+        # Create fresh Spotify service instance
+        spotify_service = SpotifyService()
+        # Use the new validation method with better error handling
+        validation_result = spotify_service.validate_token_and_user(access_token)
         
-        if not user_profile:
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        if not validation_result["valid"]:
+            raise HTTPException(status_code=401, detail=validation_result["error"])
         
+        user_profile = validation_result["user_profile"]
         return {
             "valid": True,
             "user": {
@@ -158,5 +180,67 @@ async def validate_token(token_data: Dict[str, str]):
             }
         }
     
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=401, detail=f"Token validation failed: {str(e)}")
+
+@router.get("/debug-token")
+async def debug_token(token: str = Query(..., description="Spotify access token")):
+    """Debug endpoint to check token and provide detailed error information"""
+    try:
+        print(f"=== TOKEN DEBUG ENDPOINT ===")
+        print(f"Token received: {token[:20]}...")
+        
+        # Create fresh Spotify service instance
+        spotify_service = SpotifyService()
+        # Validate token and get detailed info
+        validation_result = spotify_service.validate_token_and_user(token)
+        
+        if validation_result["valid"]:
+            user_profile = validation_result["user_profile"]
+            return {
+                "status": "success",
+                "message": "Token is valid",
+                "user": {
+                    "id": user_profile.get("id"),
+                    "display_name": user_profile.get("display_name"),
+                    "email": user_profile.get("email"),
+                    "country": user_profile.get("country"),
+                    "product": user_profile.get("product")
+                },
+                "app_config": {
+                    "client_id": spotify_service.client_id,
+                    "redirect_uri": spotify_service.redirect_uri,
+                    "scopes": spotify_service.scope
+                }
+            }
+        else:
+            return {
+                "status": "error",
+                "message": validation_result["error"],
+                "user": None,
+                "app_config": {
+                    "client_id": spotify_service.client_id,
+                    "redirect_uri": spotify_service.redirect_uri,
+                    "scopes": spotify_service.scope
+                },
+                "troubleshooting": {
+                    "check_spotify_dashboard": "Go to https://developer.spotify.com/dashboard and verify your app settings",
+                    "check_user_registration": "Make sure the user is registered in your Spotify app",
+                    "check_redirect_uri": f"Verify redirect URI matches: {spotify_service.redirect_uri}",
+                    "check_scopes": f"Verify required scopes are granted: {spotify_service.scope}"
+                }
+            }
+    
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Debug failed: {str(e)}",
+            "user": None,
+            "app_config": {
+                "client_id": spotify_service.client_id,
+                "redirect_uri": spotify_service.redirect_uri,
+                "scopes": spotify_service.scope
+            }
+        }

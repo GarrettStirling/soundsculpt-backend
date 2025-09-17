@@ -29,6 +29,10 @@ class SpotifyService:
             redirect_uri=self.redirect_uri,
             scope=self.scope
         )
+        
+        # User-specific caches - keyed by user ID
+        self._user_cached_saved_tracks = {}  # {user_id: {cache_key: data}}
+        self._user_cached_timestamps = {}    # {user_id: {cache_key: timestamp}}
     
     def get_auth_url(self) -> str:
         """Get the authorization URL for Spotify login"""
@@ -64,6 +68,60 @@ class SpotifyService:
             if "401" in str(e) or "expired" in str(e).lower():
                 return True
             return False
+    
+    def validate_token_and_user(self, access_token: str) -> Dict:
+        """Validate token and return user info with detailed error handling"""
+        try:
+            print(f"Validating token and getting user info...")
+            sp = self.create_spotify_client(access_token)
+            
+            # Try to get user profile
+            user_profile = sp.current_user()
+            if not user_profile:
+                return {
+                    "valid": False,
+                    "error": "Could not retrieve user profile",
+                    "user_id": None
+                }
+            
+            user_id = user_profile.get('id')
+            if not user_id:
+                return {
+                    "valid": False,
+                    "error": "User profile missing ID",
+                    "user_id": None
+                }
+            
+            print(f"Token validation successful for user: {user_id}")
+            return {
+                "valid": True,
+                "error": None,
+                "user_id": user_id,
+                "user_profile": user_profile
+            }
+            
+        except Exception as e:
+            error_msg = str(e)
+            print(f"Token validation failed: {error_msg}")
+            
+            if "403" in error_msg or "Forbidden" in error_msg:
+                return {
+                    "valid": False,
+                    "error": "403 Forbidden - User may not be registered in your Spotify app. Check your Spotify Developer Dashboard settings.",
+                    "user_id": None
+                }
+            elif "401" in error_msg or "Unauthorized" in error_msg:
+                return {
+                    "valid": False,
+                    "error": "401 Unauthorized - Token is invalid or expired",
+                    "user_id": None
+                }
+            else:
+                return {
+                    "valid": False,
+                    "error": f"Token validation failed: {error_msg}",
+                    "user_id": None
+                }
     
     # def get_user_saved_tracks_optimized(self, sp_client, max_tracks: int = None, exclude_tracks: bool = False) -> tuple:
     #     """
@@ -169,7 +227,8 @@ class SpotifyService:
     def get_user_saved_tracks_parallel(self, 
                                        sp_client, 
                                        max_tracks: int = None, 
-                                       exclude_tracks: bool = False) -> tuple:
+                                       exclude_tracks: bool = False,
+                                       access_token: str = None) -> tuple:
         """
         Parallel version of get_user_saved_tracks_optimized for faster fetching.
         Uses concurrent requests to reduce fetch time from ~84s to ~10-15s.
@@ -190,6 +249,9 @@ class SpotifyService:
         excluded_ids = set()
         excluded_track_data = []
         
+        # Get user ID for user-specific caching
+        user_id = self.get_user_id_from_token(access_token) if access_token else "anonymous"
+        
         # Check cache first - separate caches for analysis and exclusion tracks
         current_time = time.time()
         
@@ -198,11 +260,15 @@ class SpotifyService:
         # Cache key for exclusion tracks (only when exclude_tracks=True)
         exclusion_cache_key = "exclusion_tracks"
         
-        if hasattr(self, '_cached_saved_tracks') and hasattr(self, '_cached_timestamp'):
+        # Check user-specific analysis tracks cache
+        if user_id in self._user_cached_saved_tracks and user_id in self._user_cached_timestamps:
+            user_cache = self._user_cached_saved_tracks[user_id]
+            user_timestamps = self._user_cached_timestamps[user_id]
+            
             # Check analysis tracks cache
-            if analysis_cache_key in self._cached_saved_tracks and (current_time - self._cached_timestamp.get(analysis_cache_key, 0)) < 300:
-                print(f"Using cached analysis tracks")
-                cached_analysis_tracks = self._cached_saved_tracks[analysis_cache_key]
+            if analysis_cache_key in user_cache and (current_time - user_timestamps.get(analysis_cache_key, 0)) < 300:
+                print(f"Using cached analysis tracks for user {user_id}")
+                cached_analysis_tracks = user_cache[analysis_cache_key]
                 
                 # Sample analysis tracks if needed
                 if max_tracks and len(cached_analysis_tracks) > max_tracks:
@@ -211,9 +277,9 @@ class SpotifyService:
                     analysis_tracks = cached_analysis_tracks
             
             # Check exclusion tracks cache (only if exclude_tracks=True)
-            if exclude_tracks and exclusion_cache_key in self._cached_saved_tracks and (current_time - self._cached_timestamp.get(exclusion_cache_key, 0)) < 300:
-                print(f"Using cached exclusion tracks")
-                excluded_ids, excluded_track_data = self._cached_saved_tracks[exclusion_cache_key]
+            if exclude_tracks and exclusion_cache_key in user_cache and (current_time - user_timestamps.get(exclusion_cache_key, 0)) < 300:
+                print(f"Using cached exclusion tracks for user {user_id}")
+                excluded_ids, excluded_track_data = user_cache[exclusion_cache_key]
             
             # If we have both cached, return them
             if analysis_tracks is not None and (not exclude_tracks or excluded_ids):
@@ -316,21 +382,21 @@ class SpotifyService:
             fetch_time = time.time() - start_time
             print(f"Fetched {len(analysis_tracks) if need_analysis_tracks else 0} analysis tracks, {len(excluded_track_ids) if need_exclusion_tracks else 0} excluded tracks in {fetch_time:.2f}s")
         
-        # Cache the results separately
-        if not hasattr(self, '_cached_saved_tracks'):
-            self._cached_saved_tracks = {}
-        if not hasattr(self, '_cached_timestamp'):
-            self._cached_timestamp = {}
+        # Cache the results separately for this user
+        if user_id not in self._user_cached_saved_tracks:
+            self._user_cached_saved_tracks[user_id] = {}
+        if user_id not in self._user_cached_timestamps:
+            self._user_cached_timestamps[user_id] = {}
         
         # Cache analysis tracks if we fetched them
         if need_analysis_tracks:
-            self._cached_saved_tracks[analysis_cache_key] = analysis_tracks
-            self._cached_timestamp[analysis_cache_key] = current_time
+            self._user_cached_saved_tracks[user_id][analysis_cache_key] = analysis_tracks
+            self._user_cached_timestamps[user_id][analysis_cache_key] = current_time
         
         # Cache exclusion tracks if we fetched them
         if need_exclusion_tracks:
-            self._cached_saved_tracks[exclusion_cache_key] = (excluded_track_ids, excluded_track_data)
-            self._cached_timestamp[exclusion_cache_key] = current_time
+            self._user_cached_saved_tracks[user_id][exclusion_cache_key] = (excluded_track_ids, excluded_track_data)
+            self._user_cached_timestamps[user_id][exclusion_cache_key] = current_time
         
         # Sample analysis tracks if needed
         if max_tracks and len(analysis_tracks) > max_tracks:
@@ -345,10 +411,53 @@ class SpotifyService:
     def get_user_profile(self, sp: spotipy.Spotify) -> Dict:
         """Get user's basic profile information"""
         try:
-            return sp.current_user()
+            print(f"Attempting to get user profile...")
+            user_profile = sp.current_user()
+            print(f"Successfully retrieved user profile: {user_profile.get('id', 'unknown')}")
+            return user_profile
         except Exception as e:
             print(f"Error getting user profile: {e}")
+            # Check if it's a 403 error specifically
+            if "403" in str(e) or "Forbidden" in str(e):
+                print("403 Forbidden error - this usually means:")
+                print("1. The user is not registered in your Spotify app")
+                print("2. The app configuration is incorrect")
+                print("3. The access token is invalid or expired")
+                print("4. The required scopes are not granted")
             return {}
+    
+    def get_user_id_from_token(self, access_token: str) -> str:
+        """Get user ID from access token"""
+        try:
+            print(f"Getting user ID from token...")
+            sp = self.create_spotify_client(access_token)
+            user_profile = self.get_user_profile(sp)
+            if user_profile and user_profile.get('id'):
+                user_id = user_profile['id']
+                print(f"Successfully got user ID: {user_id}")
+                return user_id
+            else:
+                print("User profile is empty or missing ID, using token hash fallback")
+                # Fallback to token hash if user profile fails
+                import hashlib
+                fallback_id = hashlib.md5(access_token.encode()).hexdigest()[:16]
+                print(f"Using fallback user ID: {fallback_id}")
+                return fallback_id
+        except Exception as e:
+            print(f"Error getting user ID from token: {e}")
+            # Fallback to token hash
+            import hashlib
+            fallback_id = hashlib.md5(access_token.encode()).hexdigest()[:16]
+            print(f"Using fallback user ID due to error: {fallback_id}")
+            return fallback_id
+    
+    def clear_user_cache(self, user_id: str) -> None:
+        """Clear all cached data for a specific user"""
+        if user_id in self._user_cached_saved_tracks:
+            del self._user_cached_saved_tracks[user_id]
+        if user_id in self._user_cached_timestamps:
+            del self._user_cached_timestamps[user_id]
+        print(f"Cleared Spotify service cache for user {user_id}")
     
     
     def get_user_playlists(self, sp: spotipy.Spotify) -> List[Dict]:
