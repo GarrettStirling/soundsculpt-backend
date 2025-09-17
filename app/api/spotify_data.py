@@ -6,8 +6,8 @@ import spotipy
 
 router = APIRouter(prefix="/spotify", tags=["Spotify Data"])
 
-# Initialize services
-spotify_service = SpotifyService()
+# CRITICAL FIX: Never use global service instances - create fresh instances per request
+# Global instances cause cross-user data contamination
 
 class UpdatePlaylistRequest(BaseModel):
     track_uris: List[str]
@@ -16,6 +16,8 @@ class UpdatePlaylistRequest(BaseModel):
 async def test_token(token: str):
     """Simple test endpoint that takes token as query parameter"""
     try:
+        # CRITICAL FIX: Create fresh service instance per request to prevent cross-user contamination
+        spotify_service = SpotifyService()
         # Create Spotify client directly with token
         sp = spotify_service.create_spotify_client(token)
         
@@ -39,6 +41,8 @@ async def get_top_tracks_simple(
 ):
     """Get user's top tracks using query parameter instead of header"""
     try:
+        # CRITICAL FIX: Create fresh service instance per request to prevent cross-user contamination
+        spotify_service = SpotifyService()
         sp = spotify_service.create_spotify_client(token)
         
         # Get top tracks
@@ -77,6 +81,8 @@ async def get_user_profile(authorization: str = Header(..., alias="Authorization
         else:
             access_token = authorization
         
+        # CRITICAL FIX: Create fresh service instance per request to prevent cross-user contamination
+        spotify_service = SpotifyService()
         # Create Spotify client
         sp = spotify_service.create_spotify_client(access_token)
         
@@ -107,6 +113,8 @@ async def get_top_tracks(
             access_token = authorization.replace("Bearer ", "")
         else:
             access_token = authorization
+        # CRITICAL FIX: Create fresh service instance per request to prevent cross-user contamination
+        spotify_service = SpotifyService()
         sp = spotify_service.create_spotify_client(access_token)
         
         # Get top tracks
@@ -148,6 +156,8 @@ async def get_top_artists(
             access_token = authorization.replace("Bearer ", "")
         else:
             access_token = authorization
+        # CRITICAL FIX: Create fresh service instance per request to prevent cross-user contamination
+        spotify_service = SpotifyService()
         sp = spotify_service.create_spotify_client(access_token)
         
         # Get top artists
@@ -187,6 +197,8 @@ async def get_recently_played(
             access_token = authorization.replace("Bearer ", "")
         else:
             access_token = authorization
+        # CRITICAL FIX: Create fresh service instance per request to prevent cross-user contamination
+        spotify_service = SpotifyService()
         sp = spotify_service.create_spotify_client(access_token)
         
         # Get recently played tracks
@@ -224,6 +236,8 @@ async def get_user_playlists(
             access_token = authorization.replace("Bearer ", "")
         else:
             access_token = authorization
+        # CRITICAL FIX: Create fresh service instance per request to prevent cross-user contamination
+        spotify_service = SpotifyService()
         sp = spotify_service.create_spotify_client(access_token)
         
         # Get user playlists
@@ -286,6 +300,8 @@ async def search_spotify(
 ):
     """Search Spotify for tracks, artists, albums, or playlists"""
     try:
+        # CRITICAL FIX: Create fresh service instance per request to prevent cross-user contamination
+        spotify_service = SpotifyService()
         sp = spotify_service.create_spotify_client(token)
         
         results = sp.search(q=query, type=search_type, limit=limit)
@@ -347,6 +363,8 @@ async def get_user_playlists_simple(
 ):
     """Get user's saved playlists with simple query parameter"""
     try:
+        # CRITICAL FIX: Create fresh service instance per request to prevent cross-user contamination
+        spotify_service = SpotifyService()
         sp = spotify_service.create_spotify_client(token)
         
         # Get all playlists by paginating through results
@@ -393,6 +411,8 @@ async def get_playlist_tracks(
     Get tracks from a specific Spotify playlist
     """
     try:
+        # CRITICAL FIX: Create fresh service instance per request to prevent cross-user contamination
+        spotify_service = SpotifyService()
         sp = spotify_service.create_spotify_client(token)
         
         # Get all playlist tracks with pagination

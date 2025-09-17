@@ -78,59 +78,68 @@ async def callback(code: str = Query(...), state: str = Query(None)):
             print("AUTH ERROR: Token exchange failed - token_info is None")
             return RedirectResponse(url=f"{FRONTEND_URL}/?error=auth_failed")
         
-        # CRITICAL FIX: Clear ALL existing caches BEFORE redirecting to prevent cross-user contamination
-        # This ensures that when a new user logs in, they don't see previous users' data
-        print("🧹 PRE-AUTH: Clearing all user caches to prevent cross-user data contamination...")
-        
-        try:
-            # Show cache state before clearing
-            cache_info_before = spotify_service.get_cache_info()
-            print(f"📊 Cache state before clearing: {cache_info_before}")
-            
-            # CRITICAL FIX: Clear all Spotify service caches synchronously
-            spotify_service.clear_all_caches()
-            
-            # CRITICAL FIX: Clear all recommendation caches synchronously
-            from app.api.recommendations_lastfm import clear_all_user_caches
-            clear_all_user_caches(None)  # Clear all users' caches
-            
-            # Show cache state after clearing
-            cache_info_after = spotify_service.get_cache_info()
-            print(f"📊 Cache state after clearing: {cache_info_after}")
-            
-            print("✅ PRE-AUTH: Successfully cleared all user caches")
-            
-        except Exception as cache_error:
-            print(f"❌ PRE-AUTH: Error during cache clearing: {cache_error}")
-            import traceback
-            traceback.print_exc()
-            # CRITICAL FIX: Ensure caches are cleared even if errors occur
-            try:
-                spotify_service.clear_all_caches()
-                from app.api.recommendations_lastfm import clear_all_user_caches
-                clear_all_user_caches(None)
-                print("🧹 PRE-AUTH: Cleared all caches as fallback")
-            except Exception as fallback_error:
-                print(f"❌ PRE-AUTH: Failed to clear caches even as fallback: {fallback_error}")
-                # Force clear the global caches directly
-                try:
-                    import app.api.recommendations_lastfm as recs_module
-                    recs_module.excluded_tracks_cache.clear()
-                    recs_module.recommendation_pool_cache.clear()
-                    print("🧹 PRE-AUTH: Force cleared caches directly")
-                except Exception as force_error:
-                    print(f"❌ PRE-AUTH: Force clear also failed: {force_error}")
-        
         # Now redirect to frontend with success and access token
         access_token = token_info['access_token']
         print(f"AUTH SUCCESS: Redirecting with token: {access_token[:20]}...")
         
-        # Get user ID for logging
+        # Get user ID for logging and cache clearing
         try:
             user_id = spotify_service.get_user_id_from_token(access_token)
             print(f"🔐 New user logging in: {user_id}")
+            
+            # CRITICAL FIX: Clear ALL existing caches AFTER we know the new user
+            # This ensures that when a new user logs in, they don't see previous users' data
+            print("🧹 POST-AUTH: Clearing all user caches to prevent cross-user data contamination...")
+            
+            try:
+                # Show cache state before clearing
+                cache_info_before = spotify_service.get_cache_info()
+                print(f"📊 Cache state before clearing: {cache_info_before}")
+                
+                # CRITICAL FIX: Clear all Spotify service caches synchronously
+                spotify_service.clear_all_caches()
+                
+                # CRITICAL FIX: Clear all recommendation caches synchronously
+                from app.api.recommendations_lastfm import clear_all_user_caches
+                clear_all_user_caches(None)  # Clear all users' caches
+                
+                # Show cache state after clearing
+                cache_info_after = spotify_service.get_cache_info()
+                print(f"📊 Cache state after clearing: {cache_info_after}")
+                
+                print("✅ POST-AUTH: Successfully cleared all user caches")
+                
+            except Exception as cache_error:
+                print(f"❌ POST-AUTH: Error during cache clearing: {cache_error}")
+                import traceback
+                traceback.print_exc()
+                # CRITICAL FIX: Ensure caches are cleared even if errors occur
+                try:
+                    spotify_service.clear_all_caches()
+                    from app.api.recommendations_lastfm import clear_all_user_caches
+                    clear_all_user_caches(None)
+                    print("🧹 POST-AUTH: Cleared all caches as fallback")
+                except Exception as fallback_error:
+                    print(f"❌ POST-AUTH: Failed to clear caches even as fallback: {fallback_error}")
+                    # Force clear the global caches directly
+                    try:
+                        import app.api.recommendations_lastfm as recs_module
+                        recs_module.excluded_tracks_cache.clear()
+                        recs_module.recommendation_pool_cache.clear()
+                        print("🧹 POST-AUTH: Force cleared caches directly")
+                    except Exception as force_error:
+                        print(f"❌ POST-AUTH: Force clear also failed: {force_error}")
+                        
         except Exception as e:
             print(f"⚠️ Could not get user ID for logging: {e}")
+            # Still try to clear caches even if user ID fails
+            try:
+                spotify_service.clear_all_caches()
+                from app.api.recommendations_lastfm import clear_all_user_caches
+                clear_all_user_caches(None)
+                print("🧹 POST-AUTH: Cleared all caches despite user ID error")
+            except Exception as cache_error:
+                print(f"❌ POST-AUTH: Failed to clear caches: {cache_error}")
         
         # Use configurable frontend URL
         redirect_url = f"{FRONTEND_URL}/?success=true&access_token={access_token}"
