@@ -422,15 +422,21 @@ class SpotifyService:
     def get_user_profile(self, sp: spotipy.Spotify) -> Dict:
         """Get user's basic profile information"""
         try:
-            print(f"Attempting to get user profile...")
+            print(f"🔍 USER PROFILE DEBUG: Attempting to get user profile...")
             user_profile = sp.current_user()
-            print(f"Successfully retrieved user profile: {user_profile.get('id', 'unknown')}")
+            user_id = user_profile.get('id', 'unknown')
+            display_name = user_profile.get('display_name', 'unknown')
+            email = user_profile.get('email', 'unknown')
+            
+            print(f"🔍 USER PROFILE DEBUG: Retrieved profile - ID: {user_id}, Name: {display_name}, Email: {email}")
+            print(f"🔍 USER PROFILE DEBUG: Full profile keys: {list(user_profile.keys())}")
+            
             return user_profile
         except Exception as e:
-            print(f"Error getting user profile: {e}")
+            print(f"❌ USER PROFILE DEBUG: Error getting user profile: {e}")
             # Check if it's a 403 error specifically
             if "403" in str(e) or "Forbidden" in str(e):
-                print("403 Forbidden error - this usually means:")
+                print("❌ 403 Forbidden error - this usually means:")
                 print("1. The user is not registered in your Spotify app")
                 print("2. The app configuration is incorrect")
                 print("3. The access token is invalid or expired")
@@ -440,37 +446,40 @@ class SpotifyService:
     def get_user_id_from_token(self, access_token: str) -> str:
         """Get user ID from access token"""
         try:
-            print(f"Getting user ID from token...")
+            print(f"🔍 USER ID DEBUG: Getting user ID from token...")
+            print(f"🔍 USER ID DEBUG: Token preview: {access_token[:20]}...")
+            
             sp = self.create_spotify_client(access_token)
+            print(f"🔍 USER ID DEBUG: Created Spotify client successfully")
+            
             user_profile = self.get_user_profile(sp)
             if user_profile and user_profile.get('id'):
                 user_id = user_profile['id']
-                print(f"Successfully got user ID: {user_id}")
+                display_name = user_profile.get('display_name', 'unknown')
+                email = user_profile.get('email', 'unknown')
+                
+                print(f"🔍 USER ID DEBUG: Successfully got user ID: {user_id}")
+                print(f"🔍 USER ID DEBUG: User details - ID: {user_id}, Name: {display_name}, Email: {email}")
+                
                 return user_id
             else:
-                print("User profile is empty or missing ID, using token hash fallback")
+                print("⚠️ USER ID DEBUG: User profile is empty or missing ID, using token hash fallback")
                 # Fallback to token hash if user profile fails
                 import hashlib
                 fallback_id = hashlib.md5(access_token.encode()).hexdigest()[:16]
-                print(f"Using fallback user ID: {fallback_id}")
+                print(f"⚠️ USER ID DEBUG: Using fallback user ID: {fallback_id}")
                 return fallback_id
         except Exception as e:
-            print(f"Error getting user ID from token: {e}")
+            print(f"❌ USER ID DEBUG: Error getting user ID from token: {e}")
+            import traceback
+            traceback.print_exc()
             # Fallback to token hash
             import hashlib
             fallback_id = hashlib.md5(access_token.encode()).hexdigest()[:16]
-            print(f"Using fallback user ID due to error: {fallback_id}")
+            print(f"⚠️ USER ID DEBUG: Using fallback user ID due to error: {fallback_id}")
             return fallback_id
     
-    def get_user_id_from_token(self, access_token: str) -> Optional[str]:
-        """Get user ID from access token"""
-        try:
-            sp = self.create_spotify_client(access_token)
-            user_profile = sp.current_user()
-            return user_profile.get('id') if user_profile else None
-        except Exception as e:
-            print(f"Error getting user ID from token: {e}")
-            return None
+    # REMOVED DUPLICATE METHOD - using the detailed version above
     
     def clear_user_cache(self, user_id: str) -> None:
         """Clear all cached data for a specific user"""

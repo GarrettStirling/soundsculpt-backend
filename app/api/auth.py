@@ -84,7 +84,9 @@ async def callback(code: str = Query(...), state: str = Query(None)):
         
         # Get user ID for logging and cache clearing
         try:
+            print(f"🔍 AUTH DEBUG: About to get user ID from token: {access_token[:20]}...")
             user_id = spotify_service.get_user_id_from_token(access_token)
+            print(f"🔍 AUTH DEBUG: Retrieved user ID: {user_id}")
             print(f"🔐 New user logging in: {user_id}")
             
             # CRITICAL FIX: Clear ALL existing caches AFTER we know the new user
