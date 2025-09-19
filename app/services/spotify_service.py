@@ -47,17 +47,267 @@ class SpotifyService:
         state = hashlib.md5(unique_string.encode()).hexdigest()[:16]
         
         print(f"🔐 AUTH URL: Generated unique state: {state}")
-        return self.sp_oauth.get_authorize_url(state=state)
+        
+        # CRITICAL FIX: Force Spotify to show login screen every time by manually adding show_dialog parameter
+        # This prevents using cached Spotify sessions
+        auth_url = self.sp_oauth.get_authorize_url(state=state)
+        
+        # NUCLEAR APPROACH: Add multiple parameters to force fresh login and clear any cached sessions
+        params = []
+        if 'show_dialog' not in auth_url:
+            params.append('show_dialog=true')
+        if 'prompt' not in auth_url:
+            params.append('prompt=login')  # Force login prompt
+        if 'login' not in auth_url:
+            params.append('login=true')    # Additional login parameter
+        
+        # CRITICAL: Add parameters to force Spotify to completely forget previous sessions
+        params.append('force_login=true')  # Force login even if user is logged in
+        params.append('skip_initial_state=true')  # Skip any cached state
+        
+        # Add a unique timestamp to prevent any caching
+        import time
+        params.append(f'ts={int(time.time() * 1000)}')  # Unique timestamp
+        
+        # NUCLEAR: Add logout parameter to force Spotify to clear its session
+        params.append('logout=true')
+        
+        # NUCLEAR: Add additional parameters to force complete session reset
+        params.append('approval_prompt=force')  # Force approval prompt
+        params.append('response_mode=query')    # Force query mode
+        params.append('include_granted_scopes=true')  # Include granted scopes
+        
+        # NUCLEAR: Add random parameters to prevent any caching
+        import random
+        params.append(f'nonce={random.randint(100000, 999999)}')  # Random nonce
+        params.append(f'verifier={random.randint(100000, 999999)}')  # Random verifier
+        
+        # NUCLEAR: Force complete logout and fresh login
+        params.append('logout=true')  # Force logout
+        params.append('prompt=select_account')  # Force account selection
+        params.append('login_hint=')  # Clear login hint
+        params.append('max_age=0')  # Force fresh authentication
+        
+        if params:
+            separator = '&' if '?' in auth_url else '?'
+            auth_url += f"{separator}{'&'.join(params)}"
+            
+        print(f"🔐 AUTH URL: Final URL with NUCLEAR forced login params: {auth_url}")
+        return auth_url
     
-    def get_access_token(self, code: str) -> Optional[Dict]:
+    def get_auth_url_with_state(self, custom_state: str) -> str:
+        """Get the authorization URL for Spotify login with a custom state parameter"""
+        print(f"🔐 AUTH URL: Using custom state: {custom_state}")
+        
+        # ALTERNATIVE APPROACH: Complete direct OAuth implementation
+        # This completely bypasses Spotipy's OAuth handling
+        try:
+            import urllib.parse
+            import time
+            
+            # Construct auth URL directly without any Spotipy involvement
+            base_url = "https://accounts.spotify.com/authorize"
+            
+            # Use only the most essential parameters to avoid any caching issues
+            params = {
+                'client_id': self.client_id,
+                'response_type': 'code',
+                'redirect_uri': self.redirect_uri,
+                'scope': self.scope,
+                'state': custom_state,
+                'show_dialog': 'true'  # Force login dialog
+            }
+            
+            # Build query string
+            query_string = urllib.parse.urlencode(params)
+            direct_auth_url = f"{base_url}?{query_string}"
+            
+            print(f"🔐 DIRECT: Generated direct auth URL (no Spotipy): {direct_auth_url}")
+            return direct_auth_url
+            
+        except Exception as e:
+            print(f"⚠️ Direct URL construction failed: {e}")
+            # Fall back to Spotipy method
+            auth_url = self.sp_oauth.get_authorize_url(state=custom_state)
+            return auth_url
+    
+    def get_pkce_auth_url_with_state(self, custom_state: str, code_challenge: str) -> str:
+        """Get PKCE authorization URL for Spotify login with a custom state parameter"""
+        print(f"🔐 PKCE AUTH URL: Using custom state: {custom_state}")
+        print(f"🔐 PKCE AUTH URL: Using code challenge: {code_challenge[:20]}...")
+        
+        try:
+            import urllib.parse
+            
+            # Construct PKCE auth URL directly
+            base_url = "https://accounts.spotify.com/authorize"
+            
+            # PKCE parameters
+            params = {
+                'client_id': self.client_id,
+                'response_type': 'code',
+                'redirect_uri': self.redirect_uri,
+                'scope': self.scope,
+                'state': custom_state,
+                'code_challenge': code_challenge,
+                'code_challenge_method': 'S256',
+                'show_dialog': 'true'  # Force login dialog
+            }
+            
+            # Build query string
+            query_string = urllib.parse.urlencode(params)
+            pkce_auth_url = f"{base_url}?{query_string}"
+            
+            print(f"🔐 PKCE DIRECT: Generated PKCE auth URL: {pkce_auth_url}")
+            return pkce_auth_url
+            
+        except Exception as e:
+            print(f"⚠️ PKCE URL construction failed: {e}")
+            # Fall back to regular method
+            return self.get_auth_url_with_state(custom_state)
+        
+        # NUCLEAR APPROACH: Add multiple parameters to force fresh login and clear any cached sessions
+        params = []
+        if 'show_dialog' not in auth_url:
+            params.append('show_dialog=true')
+        if 'prompt' not in auth_url:
+            params.append('prompt=login')  # Force login prompt
+        if 'login' not in auth_url:
+            params.append('login=true')    # Additional login parameter
+        
+        # CRITICAL: Add parameters to force Spotify to completely forget previous sessions
+        params.append('force_login=true')  # Force login even if user is logged in
+        params.append('skip_initial_state=true')  # Skip any cached state
+        
+        # Add a unique timestamp to prevent any caching
+        import time
+        params.append(f'ts={int(time.time() * 1000)}')  # Unique timestamp
+        
+        # NUCLEAR: Add logout parameter to force Spotify to clear its session
+        params.append('logout=true')
+        
+        # NUCLEAR: Add additional parameters to force complete session reset
+        params.append('approval_prompt=force')  # Force approval prompt
+        params.append('response_mode=query')    # Force query mode
+        params.append('include_granted_scopes=true')  # Include granted scopes
+        
+        # NUCLEAR: Add random parameters to prevent any caching
+        import random
+        params.append(f'nonce={random.randint(100000, 999999)}')  # Random nonce
+        params.append(f'verifier={random.randint(100000, 999999)}')  # Random verifier
+        
+        # NUCLEAR: Force complete logout and fresh login
+        params.append('logout=true')  # Force logout
+        params.append('prompt=select_account')  # Force account selection
+        params.append('login_hint=')  # Clear login hint
+        params.append('max_age=0')  # Force fresh authentication
+        
+        if params:
+            separator = '&' if '?' in auth_url else '?'
+            auth_url += f"{separator}{'&'.join(params)}"
+            
+        print(f"🔐 AUTH URL: Final URL with NUCLEAR forced login params: {auth_url}")
+        return auth_url
+    
+    def get_access_token(self, code: str, code_verifier: str = None) -> Optional[Dict]:
         """Exchange authorization code for access token"""
         try:
             print(f"SPOTIFY SERVICE: Attempting token exchange with code: {code[:20]}...")
+            print(f"SPOTIFY SERVICE: Code full length: {len(code)}")
+            print(f"SPOTIFY SERVICE: Code first 50 chars: {code[:50]}")
+            print(f"SPOTIFY SERVICE: Code last 50 chars: {code[-50:]}")
             print(f"SPOTIFY SERVICE: Client ID: {self.client_id}")
             print(f"SPOTIFY SERVICE: Redirect URI: {self.redirect_uri}")
             
-            token_info = self.sp_oauth.get_access_token(code)
+            # ALTERNATIVE APPROACH: Direct HTTP token exchange (bypass Spotipy entirely)
+            try:
+                import requests
+                import base64
+                
+                # Prepare token endpoint
+                token_url = "https://accounts.spotify.com/api/token"
+                
+                # Prepare headers
+                client_credentials = f"{self.client_id}:{self.client_secret}"
+                encoded_credentials = base64.b64encode(client_credentials.encode()).decode()
+                
+                headers = {
+                    'Authorization': f'Basic {encoded_credentials}',
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                }
+                
+                # Prepare data
+                data = {
+                    'grant_type': 'authorization_code',
+                    'code': code,
+                    'redirect_uri': self.redirect_uri
+                }
+                
+                # Add code_verifier for PKCE flow
+                if code_verifier:
+                    data['code_verifier'] = code_verifier
+                    print(f"🔐 DIRECT: Using PKCE code_verifier: {code_verifier[:20]}...")
+                else:
+                    print(f"🔐 DIRECT: No code_verifier provided, using regular OAuth flow")
+                
+                print(f"🔐 DIRECT: Making direct HTTP request to Spotify token endpoint")
+                print(f"🔐 DIRECT: Token URL: {token_url}")
+                print(f"🔐 DIRECT: Code being exchanged: {code[:20]}...")
+                
+                # Make direct HTTP request
+                response = requests.post(token_url, headers=headers, data=data)
+                
+                print(f"🔐 DIRECT: HTTP response status: {response.status_code}")
+                print(f"🔐 DIRECT: HTTP response headers: {dict(response.headers)}")
+                
+                if response.status_code == 200:
+                    token_info = response.json()
+                    print(f"🔐 DIRECT: Token exchange successful via direct HTTP: {token_info}")
+                    
+                    if 'access_token' in token_info:
+                        print(f"🔐 DIRECT: Access token returned: {token_info['access_token'][:20]}...")
+                        print(f"🔐 DIRECT: Full access token: {token_info['access_token']}")
+                        return token_info
+                    else:
+                        print(f"🔐 DIRECT: No access token in direct response!")
+                else:
+                    print(f"🔐 DIRECT: Direct HTTP token exchange failed: {response.status_code}")
+                    print(f"🔐 DIRECT: Error response: {response.text}")
+                    
+            except Exception as direct_error:
+                print(f"⚠️ DIRECT: Direct HTTP token exchange failed: {direct_error}")
+            
+            # FALLBACK: Use Spotipy method
+            print(f"🔐 FALLBACK: Using Spotipy token exchange method")
+            
+            # CRITICAL FIX: Create a fresh SpotifyOAuth instance for each token exchange
+            # This prevents state contamination between different users
+            from spotipy.oauth2 import SpotifyOAuth
+            fresh_sp_oauth = SpotifyOAuth(
+                client_id=self.client_id,
+                client_secret=self.client_secret,
+                redirect_uri=self.redirect_uri,
+                scope=self.scope
+            )
+            print(f"SPOTIFY SERVICE: Created fresh OAuth instance for token exchange")
+            
+            # Handle PKCE if code_verifier is provided
+            if code_verifier:
+                print(f"🔐 FALLBACK: Using PKCE with Spotipy, code_verifier: {code_verifier[:20]}...")
+                # For PKCE, we need to use the code_verifier parameter
+                token_info = fresh_sp_oauth.get_access_token(code, code_verifier=code_verifier)
+            else:
+                print(f"🔐 FALLBACK: Using regular OAuth with Spotipy")
+                token_info = fresh_sp_oauth.get_access_token(code)
             print(f"SPOTIFY SERVICE: Token exchange successful: {token_info}")
+            
+            # CRITICAL DEBUG: Log the exact token being returned
+            if token_info and 'access_token' in token_info:
+                print(f"SPOTIFY SERVICE: Access token returned: {token_info['access_token'][:20]}...")
+                print(f"SPOTIFY SERVICE: Full access token: {token_info['access_token']}")
+            else:
+                print(f"SPOTIFY SERVICE: No access token in response!")
+                
             return token_info
         except Exception as e:
             print(f"TOKEN ERROR: {e}")
@@ -67,7 +317,43 @@ class SpotifyService:
     
     def create_spotify_client(self, access_token: str) -> spotipy.Spotify:
         """Create authenticated Spotify client"""
-        return spotipy.Spotify(auth=access_token)
+        print(f"🔍 CLIENT DEBUG: Creating Spotify client with token: {access_token[:20]}...")
+        print(f"🔍 CLIENT DEBUG: Full token being passed to client: {access_token}")
+        
+        # NUCLEAR FIX: Create a fresh OAuth manager with proper client credentials
+        from spotipy.oauth2 import SpotifyOAuth
+        
+        # Create a completely fresh OAuth manager to prevent any caching
+        fresh_oauth = SpotifyOAuth(
+            client_id=self.client_id,
+            client_secret=self.client_secret,
+            redirect_uri=self.redirect_uri,
+            scope=self.scope
+        )
+        
+        # Manually set the token on the auth manager
+        fresh_oauth.token_info = {
+            'access_token': access_token,
+            'token_type': 'Bearer',
+            'expires_in': 3600
+        }
+        
+        # Create client with fresh OAuth manager
+        client = spotipy.Spotify(auth_manager=fresh_oauth)
+        print(f"🔍 CLIENT DEBUG: Spotify client created with fresh OAuth manager")
+        
+        # NUCLEAR DEBUG: Verify the client has the correct token
+        try:
+            client_token = client.auth_manager.get_access_token()
+            print(f"🔍 CLIENT DEBUG: Client's internal token: {client_token[:20] if client_token else 'None'}...")
+            if client_token != access_token:
+                print(f"❌ CLIENT DEBUG: TOKEN MISMATCH! Expected: {access_token[:20]}..., Got: {client_token[:20] if client_token else 'None'}...")
+            else:
+                print(f"✅ CLIENT DEBUG: Token matches correctly")
+        except Exception as e:
+            print(f"⚠️ CLIENT DEBUG: Could not verify client token: {e}")
+        
+        return client
     
     def is_token_expired(self, sp_client: spotipy.Spotify) -> bool:
         """Check if the Spotify access token has expired"""
@@ -423,13 +709,25 @@ class SpotifyService:
         """Get user's basic profile information"""
         try:
             print(f"🔍 USER PROFILE DEBUG: Attempting to get user profile...")
+            print(f"🔍 USER PROFILE DEBUG: About to call sp.current_user()...")
+            
+            # NUCLEAR DEBUG: Get the token from the client to verify it
+            try:
+                client_token = sp.auth_manager.get_access_token()
+                print(f"🔍 USER PROFILE DEBUG: Client token: {client_token[:20] if client_token else 'None'}...")
+            except:
+                print(f"🔍 USER PROFILE DEBUG: Could not get client token")
+            
             user_profile = sp.current_user()
+            print(f"🔍 USER PROFILE DEBUG: sp.current_user() completed")
+            
             user_id = user_profile.get('id', 'unknown')
             display_name = user_profile.get('display_name', 'unknown')
             email = user_profile.get('email', 'unknown')
             
             print(f"🔍 USER PROFILE DEBUG: Retrieved profile - ID: {user_id}, Name: {display_name}, Email: {email}")
             print(f"🔍 USER PROFILE DEBUG: Full profile keys: {list(user_profile.keys())}")
+            print(f"🔍 USER PROFILE DEBUG: Full user profile: {user_profile}")
             
             return user_profile
         except Exception as e:
