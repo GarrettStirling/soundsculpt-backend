@@ -120,100 +120,7 @@ async def login(request: Request):
         print(f"❌ LOGIN ERROR: {e}")
         raise HTTPException(status_code=500, detail=f"Authentication error: {str(e)}")
 
-@router.get("/login-pkce")
-async def login_pkce(request: Request):
-    """PKCE OAuth login endpoint"""
-    try:
-        # Get frontend URL from request
-        frontend_url = get_frontend_url_from_request(request)
-        print(f"🔐 PKCE LOGIN: Detected frontend URL: {frontend_url}")
-        
-        # Create fresh Spotify service instance
-        spotify_service = SpotifyService()
-        
-        # Generate PKCE code verifier and challenge
-        import secrets
-        import base64
-        import hashlib
-        
-        # Generate code verifier (43-128 characters)
-        code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode('utf-8').rstrip('=')
-        
-        # Generate code challenge (SHA256 hash of verifier)
-        code_challenge = base64.urlsafe_b64encode(
-            hashlib.sha256(code_verifier.encode('utf-8')).digest()
-        ).decode('utf-8').rstrip('=')
-        
-        print(f"🔐 PKCE LOGIN: Generated code_verifier: {code_verifier[:20]}...")
-        print(f"🔐 PKCE LOGIN: Generated code_challenge: {code_challenge[:20]}...")
-        
-        # Create state parameter
-        import time, random
-        state_string = f"{frontend_url}|{time.time()}|{random.random()}"
-        state = hashlib.md5(state_string.encode()).hexdigest()[:16]
-        
-        # Store the state mapping and PKCE verifier
-        global state_to_frontend_url, pkce_verifiers
-        if 'state_to_frontend_url' not in globals():
-            state_to_frontend_url = {}
-        if 'pkce_verifiers' not in globals():
-            pkce_verifiers = {}
-            
-        state_to_frontend_url[state] = frontend_url
-        pkce_verifiers[state] = code_verifier
-        
-        # Create PKCE auth URL
-        auth_url = spotify_service.get_pkce_auth_url_with_state(state, code_challenge)
-        print(f"🔐 PKCE LOGIN: Generated PKCE auth URL: {auth_url}")
-        
-        return RedirectResponse(url=auth_url)
-        
-    except Exception as e:
-        print(f"❌ PKCE LOGIN ERROR: {e}")
-        raise HTTPException(status_code=500, detail=f"PKCE authentication error: {str(e)}")
 
-@router.get("/login-direct")
-async def login_direct(request: Request):
-    """Direct OAuth login endpoint (bypasses Spotipy)"""
-    try:
-        # Get frontend URL from request
-        frontend_url = get_frontend_url_from_request(request)
-        print(f"🔐 DIRECT LOGIN: Detected frontend URL: {frontend_url}")
-        
-        # Create fresh Spotify service instance
-        spotify_service = SpotifyService()
-        
-        # Create state parameter
-        import hashlib, time, random
-        state_string = f"{frontend_url}|{time.time()}|{random.random()}"
-        state = hashlib.md5(state_string.encode()).hexdigest()[:16]
-        
-        # Store the state mapping
-        global state_to_frontend_url
-        if 'state_to_frontend_url' not in globals():
-            state_to_frontend_url = {}
-        state_to_frontend_url[state] = frontend_url
-        
-        # Create direct auth URL (minimal parameters)
-        import urllib.parse
-        base_url = "https://accounts.spotify.com/authorize"
-        params = {
-            'client_id': spotify_service.client_id,
-            'response_type': 'code',
-            'redirect_uri': spotify_service.redirect_uri,
-            'scope': spotify_service.scope,
-            'state': state,
-            'show_dialog': 'true'
-        }
-        query_string = urllib.parse.urlencode(params)
-        auth_url = f"{base_url}?{query_string}"
-        
-        print(f"🔐 DIRECT LOGIN: Generated direct auth URL: {auth_url}")
-        return RedirectResponse(url=auth_url)
-        
-    except Exception as e:
-        print(f"❌ DIRECT LOGIN ERROR: {e}")
-        raise HTTPException(status_code=500, detail=f"Direct authentication error: {str(e)}")
 
 @router.get("/login-nuclear")
 async def login_nuclear(request: Request):
@@ -221,7 +128,7 @@ async def login_nuclear(request: Request):
     try:
         # Get frontend URL from request
         frontend_url = get_frontend_url_from_request(request)
-        print(f"🔐 NUCLEAR LOGIN: Detected frontend URL: {frontend_url}")
+        print(f"🔐 LOGIN: Detected frontend URL: {frontend_url}")
         
         # Create fresh Spotify service instance
         spotify_service = SpotifyService()
@@ -266,12 +173,12 @@ async def login_nuclear(request: Request):
         query_string = urllib.parse.urlencode(params)
         auth_url = f"{base_url}?{query_string}"
         
-        print(f"🔐 NUCLEAR LOGIN: Generated nuclear auth URL: {auth_url}")
+        print(f"🔐 LOGIN: Generated auth URL: {auth_url}")
         return RedirectResponse(url=auth_url)
         
     except Exception as e:
-        print(f"❌ NUCLEAR LOGIN ERROR: {e}")
-        raise HTTPException(status_code=500, detail=f"Nuclear authentication error: {str(e)}")
+        print(f"❌ LOGIN ERROR: {e}")
+        raise HTTPException(status_code=500, detail=f"Authentication error: {str(e)}")
 
 @router.get("/redirect")
 async def login_redirect():
@@ -314,19 +221,6 @@ async def callback(request: Request, code: str = Query(...), state: str = Query(
         spotify_service = SpotifyService()
         print(f"🔐 AUTH CALLBACK: Created Spotify service instance")
         
-        # Check if this is a PKCE flow and retrieve code_verifier
-        global pkce_verifiers
-        if 'pkce_verifiers' not in globals():
-            pkce_verifiers = {}
-            
-        code_verifier = None
-        if state and state in pkce_verifiers:
-            code_verifier = pkce_verifiers[state]
-            print(f"🔐 AUTH CALLBACK: Found PKCE code_verifier for state {state}: {code_verifier[:20]}...")
-            # Clean up the stored verifier
-            del pkce_verifiers[state]
-        else:
-            print(f"🔐 AUTH CALLBACK: No PKCE code_verifier found for state {state}, using regular OAuth flow")
         
         # Exchange code for access token
         print(f"🔐 AUTH CALLBACK: Starting token exchange...")
@@ -335,11 +229,7 @@ async def callback(request: Request, code: str = Query(...), state: str = Query(
         print(f"🔐 AUTH CALLBACK: Code first 50 chars: {code[:50]}")
         print(f"🔐 AUTH CALLBACK: Code last 50 chars: {code[-50:]}")
         
-        # Pass code_verifier if this is a PKCE flow
-        if code_verifier:
-            token_info = spotify_service.get_access_token(code, code_verifier=code_verifier)
-        else:
-            token_info = spotify_service.get_access_token(code)
+        token_info = spotify_service.get_access_token(code)
         print(f"🔐 AUTH CALLBACK: Token info result: {token_info}")
         
         if token_info:
@@ -360,14 +250,10 @@ async def callback(request: Request, code: str = Query(...), state: str = Query(
         
         # Get user ID for logging and cache clearing
         try:
-            print(f"🔍 AUTH DEBUG: About to get user ID from token: {access_token[:20]}...")
-            print(f"🔍 AUTH DEBUG: Token being passed to get_user_id_from_token: {access_token}")
             user_id = spotify_service.get_user_id_from_token(access_token)
-            print(f"🔍 AUTH DEBUG: Retrieved user ID: {user_id}")
-            print(f"🔍 AUTH DEBUG: User ID type: {type(user_id)}")
-            print(f"🔍 AUTH DEBUG: User ID length: {len(user_id) if user_id else 'None'}")
+            print(f"🔍 Retrieved user ID: {user_id}")
             
-            # CRITICAL FIX: Validate that the token belongs to the expected user
+            # Validate that the token belongs to the expected user
             # If we're getting a hash-based user ID, it means the token exchange failed
             # and we're getting the wrong user's token
             if user_id.startswith('a') and len(user_id) == 16:
@@ -379,7 +265,7 @@ async def callback(request: Request, code: str = Query(...), state: str = Query(
             
             print(f"🔐 New user logging in: {user_id}")
             
-            # CRITICAL FIX: Clear ALL existing caches AFTER we know the new user
+            # Clear ALL existing caches AFTER we know the new user
             # This ensures that when a new user logs in, they don't see previous users' data
             print("🧹 POST-AUTH: Clearing all user caches to prevent cross-user data contamination...")
             
@@ -388,10 +274,10 @@ async def callback(request: Request, code: str = Query(...), state: str = Query(
                 cache_info_before = spotify_service.get_cache_info()
                 print(f"📊 Cache state before clearing: {cache_info_before}")
                 
-                # CRITICAL FIX: Clear all Spotify service caches synchronously
+                # Clear all Spotify service caches synchronously
                 spotify_service.clear_all_caches()
                 
-                # CRITICAL FIX: Clear all recommendation caches synchronously
+                # Clear all recommendation caches synchronously
                 from app.api.recommendations_lastfm import clear_all_user_caches
                 clear_all_user_caches(None)  # Clear all users' caches
                 
@@ -405,7 +291,7 @@ async def callback(request: Request, code: str = Query(...), state: str = Query(
                 print(f"❌ POST-AUTH: Error during cache clearing: {cache_error}")
                 import traceback
                 traceback.print_exc()
-                # CRITICAL FIX: Ensure caches are cleared even if errors occur
+                # Ensure caches are cleared even if errors occur
                 try:
                     spotify_service.clear_all_caches()
                     from app.api.recommendations_lastfm import clear_all_user_caches
@@ -462,16 +348,10 @@ async def callback(request: Request, code: str = Query(...), state: str = Query(
             'timestamp': time.time()
         }
         
-        print(f"🔍 AUTH DEBUG: Token package before encoding: {token_package}")
-        print(f"🔍 AUTH DEBUG: Access token in package: {token_package['access_token'][:20]}...")
-        print(f"🔍 AUTH DEBUG: User ID in package: {token_package['user_id']}")
-        print(f"🔍 AUTH DEBUG: Timestamp in package: {token_package['timestamp']}")
-        
         # Encode the token package
         token_json = json.dumps(token_package)
-        print(f"🔍 AUTH DEBUG: JSON before encoding: {token_json}")
         encoded_token = base64.urlsafe_b64encode(token_json.encode()).decode()
-        print(f"🔍 AUTH DEBUG: Encoded token: {encoded_token}")
+        print(f"🔐 Token package encoded successfully")
         
         # Redirect to frontend with the encoded token
         redirect_url = f"{frontend_url}/?auth_success=true&token={encoded_token}"
@@ -579,11 +459,11 @@ async def clear_all_caches():
     try:
         print("🧹 MANUAL: Clearing all user caches via API endpoint...")
         
-        # CRITICAL FIX: Clear all Spotify service caches
+        # Clear all Spotify service caches
         spotify_service = SpotifyService()
         spotify_service.clear_all_caches()
         
-        # CRITICAL FIX: Clear all recommendation caches
+        # Clear all recommendation caches
         from app.api.recommendations_lastfm import clear_all_user_caches
         clear_all_user_caches(None)
         
@@ -594,7 +474,7 @@ async def clear_all_caches():
         
     except Exception as e:
         print(f"❌ MANUAL: Error clearing caches via API: {e}")
-        # CRITICAL FIX: Force clear caches even if errors occur
+        # Force clear caches even if errors occur
         try:
             import app.api.recommendations_lastfm as recs_module
             recs_module.excluded_tracks_cache.clear()
@@ -652,8 +532,8 @@ async def debug_tokens():
                     "token_preview": str(token_data)[:20] + '...' if token_data else 'none'
                 }
         
-        print(f"🔍 DEBUG-TOKENS: Current state - {len(temp_tokens)} tokens stored")
-        print(f"🔍 DEBUG-TOKENS: Token IDs: {list(temp_tokens.keys())}")
+        print(f"🔍 Current state - {len(temp_tokens)} tokens stored")
+        print(f"🔍 Token IDs: {list(temp_tokens.keys())}")
         
         return {
             "total_tokens": len(temp_tokens),
@@ -661,7 +541,7 @@ async def debug_tokens():
             "token_details": token_info
         }
     except Exception as e:
-        print(f"❌ DEBUG-TOKENS ERROR: {e}")
+        print(f"❌ ERROR: {e}")
         return {"error": str(e)}
 
 @router.get("/debug-cache")
@@ -689,7 +569,7 @@ async def debug_cache():
 async def debug_token(token: str = Query(..., description="Spotify access token")):
     """Debug endpoint to check token and provide detailed error information"""
     try:
-        print(f"=== TOKEN DEBUG ENDPOINT ===")
+        print(f"=== TOKEN DEBUG ===")
         print(f"Token received: {token[:20]}...")
         
         # Create fresh Spotify service instance
