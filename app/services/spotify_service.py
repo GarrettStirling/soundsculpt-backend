@@ -306,7 +306,7 @@ class SpotifyService:
                 }
 
     def get_user_saved_tracks_parallel(self, 
-                                       sp_client, 
+                                       sp_client=None,  # COMPATIBILITY LAYER: No longer needed
                                        max_tracks: int = None, 
                                        exclude_tracks: bool = False,
                                        access_token: str = None) -> tuple:
@@ -374,13 +374,22 @@ class SpotifyService:
             print(f"Fetching fresh saved tracks - analysis: {need_analysis_tracks}, exclusion: {need_exclusion_tracks}")
             start_time = time.time()
             
-            # First, get total count to determine how many parallel requests we need
+            # First, get total count using direct HTTP API call - COMPATIBILITY LAYER
             try:
-                initial_response = sp_client.current_user_saved_tracks(limit=1, offset=0)
-                total_tracks = initial_response.get('total', 0)
-                print(f"Total saved tracks: {total_tracks}")
+                print(f"🔍 COMPATIBILITY: Getting saved tracks count with direct HTTP API")
+                import requests
+                headers = {'Authorization': f'Bearer {access_token}'}
+                response = requests.get('https://api.spotify.com/v1/me/tracks?limit=1&offset=0', headers=headers)
+                
+                if response.status_code == 200:
+                    initial_response = response.json()
+                    total_tracks = initial_response.get('total', 0)
+                    print(f"🔍 COMPATIBILITY: Total saved tracks: {total_tracks}")
+                else:
+                    print(f"❌ COMPATIBILITY: HTTP {response.status_code} getting saved tracks count")
+                    return [], set(), []
             except Exception as e:
-                print(f"Error getting total count: {e}")
+                print(f"❌ COMPATIBILITY: Error getting total count: {e}")
                 return [], set(), []
             
             if total_tracks == 0:
@@ -401,11 +410,20 @@ class SpotifyService:
         print(f"Making {num_requests} parallel requests to fetch {tracks_to_fetch} tracks")
         
         def fetch_batch(offset):
-            """Fetch a batch of saved tracks"""
+            """Fetch a batch of saved tracks - COMPATIBILITY LAYER"""
             try:
-                return sp_client.current_user_saved_tracks(limit=limit, offset=offset)
+                print(f"🔍 COMPATIBILITY: Fetching batch at offset {offset}")
+                import requests
+                headers = {'Authorization': f'Bearer {access_token}'}
+                response = requests.get(f'https://api.spotify.com/v1/me/tracks?limit={limit}&offset={offset}', headers=headers)
+                
+                if response.status_code == 200:
+                    return response.json()
+                else:
+                    print(f"❌ COMPATIBILITY: HTTP {response.status_code} fetching batch at offset {offset}")
+                    return None
             except Exception as e:
-                print(f"Error fetching batch at offset {offset}: {e}")
+                print(f"❌ COMPATIBILITY: Error fetching batch at offset {offset}: {e}")
                 return None
         
         # Initialize variables for fetching
@@ -489,67 +507,55 @@ class SpotifyService:
         
         return analysis_tracks, excluded_ids, excluded_track_data
     
-    def get_user_profile(self, sp: spotipy.Spotify) -> Dict:
-        """Get user's basic profile information"""
+    def get_user_profile(self, token: str) -> Dict:
+        """Get user's basic profile information - COMPATIBILITY LAYER using direct HTTP calls"""
         try:
-            print(f"🔍 Attempting to get user profile...")
+            print(f"🔍 COMPATIBILITY: Getting user profile with token (length: {len(token)})")
             
-            # Get the token from the client to verify it
-            try:
-                client_token = sp.auth_manager.get_access_token()
-                print(f"🔍 Client token: {client_token[:20] if client_token else 'None'}...")
-            except:
-                print(f"🔍 Could not get client token")
+            # Use direct HTTP API call instead of Spotipy to avoid caching issues
+            import requests
+            headers = {'Authorization': f'Bearer {token}'}
+            response = requests.get('https://api.spotify.com/v1/me', headers=headers)
             
-            user_profile = sp.current_user()
-            print(f"🔍 sp.current_user() completed")
-            
-            user_id = user_profile.get('id', 'unknown')
-            display_name = user_profile.get('display_name', 'unknown')
-            email = user_profile.get('email', 'unknown')
-            
-            print(f"🔍 Retrieved profile - ID: {user_id}, Name: {display_name}, Email: {email}")
-            
-            return user_profile
+            if response.status_code == 200:
+                user_profile = response.json()
+                user_id = user_profile.get('id', 'unknown')
+                display_name = user_profile.get('display_name', 'unknown')
+                email = user_profile.get('email', 'unknown')
+                
+                print(f"🔍 COMPATIBILITY: Retrieved profile - ID: {user_id}, Name: {display_name}, Email: {email}")
+                return user_profile
+            else:
+                print(f"❌ COMPATIBILITY: HTTP {response.status_code} getting user profile")
+                return {}
+                
         except Exception as e:
-            print(f"❌ Error getting user profile: {e}")
-            # Check if it's a 403 error specifically
-            if "403" in str(e) or "Forbidden" in str(e):
-                print("❌ 403 Forbidden error - this usually means:")
-                print("1. The user is not registered in your Spotify app")
-                print("2. The app configuration is incorrect")
-                print("3. The access token is invalid or expired")
-                print("4. The required scopes are not granted")
+            print(f"❌ COMPATIBILITY: Error getting user profile: {e}")
             return {}
     
     def get_user_id_from_token(self, access_token: str) -> str:
-        """Get user ID from access token"""
+        """Get user ID from access token - COMPATIBILITY LAYER"""
         try:
-            print(f"🔍 Getting user ID from token...")
+            print(f"🔍 COMPATIBILITY: Getting user ID from token...")
             
-            sp = self.create_spotify_client(access_token)
-            print(f"🔍 Created Spotify client successfully")
-            
-            user_profile = self.get_user_profile(sp)
+            # Use direct HTTP API call instead of Spotipy to avoid caching issues
+            user_profile = self.get_user_profile(access_token)
             if user_profile and user_profile.get('id'):
                 user_id = user_profile['id']
                 display_name = user_profile.get('display_name', 'unknown')
                 email = user_profile.get('email', 'unknown')
                 
-                print(f"🔍 Successfully got user ID: {user_id}")
-                
+                print(f"🔍 COMPATIBILITY: Successfully got user ID: {user_id}")
                 return user_id
             else:
-                print("⚠️ User profile is empty or missing ID, using token hash fallback")
+                print("⚠️ COMPATIBILITY: User profile is empty or missing ID, using token hash fallback")
                 # Fallback to token hash if user profile fails
                 import hashlib
                 fallback_id = hashlib.md5(access_token.encode()).hexdigest()[:16]
-                print(f"⚠️ Using fallback user ID: {fallback_id}")
+                print(f"⚠️ COMPATIBILITY: Using fallback user ID: {fallback_id}")
                 return fallback_id
         except Exception as e:
-            print(f"❌ Error getting user ID from token: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"❌ COMPATIBILITY: Error getting user ID from token: {e}")
             # Fallback to token hash
             import hashlib
             fallback_id = hashlib.md5(access_token.encode()).hexdigest()[:16]

@@ -348,6 +348,14 @@ async def callback(request: Request, code: str = Query(...), state: str = Query(
             'timestamp': time.time()
         }
         
+        # DEBUG: Log token package details for Nuclear Params
+        print(f"🔍 NUCLEAR TOKEN PACKAGE DEBUG:")
+        print(f"  - access_token length: {len(access_token) if access_token else 'None'}")
+        print(f"  - access_token starts with: {access_token[:20] if access_token else 'None'}...")
+        print(f"  - user_id: {user_id}")
+        print(f"  - timestamp: {time.time()}")
+        print(f"  - token_package keys: {list(token_package.keys())}")
+        
         # Encode the token package
         token_json = json.dumps(token_package)
         encoded_token = base64.urlsafe_b64encode(token_json.encode()).decode()

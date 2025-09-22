@@ -16,13 +16,18 @@ class UpdatePlaylistRequest(BaseModel):
 async def test_token(token: str):
     """Simple test endpoint that takes token as query parameter"""
     try:
+        print(f"🔍 TEST TOKEN DEBUG: Received token length: {len(token) if token else 'None'}")
+        print(f"🔍 TEST TOKEN DEBUG: Token starts with: {token[:20] if token else 'None'}...")
+        
         # CRITICAL FIX: Create fresh service instance per request to prevent cross-user contamination
         spotify_service = SpotifyService()
         # Create Spotify client directly with token
         sp = spotify_service.create_spotify_client(token)
         
         # Get user profile as a simple test
-        profile = spotify_service.get_user_profile(sp)
+        profile = spotify_service.get_user_profile(token)
+        
+        print(f"🔍 TEST TOKEN DEBUG: Retrieved profile for user: {profile.get('id', 'Unknown')}")
         
         return {
             "message": "Token works!",
@@ -31,6 +36,7 @@ async def test_token(token: str):
         }
     
     except Exception as e:
+        print(f"❌ TEST TOKEN ERROR: {e}")
         raise HTTPException(status_code=400, detail=f"Token test failed: {str(e)}")
 
 @router.get("/top-tracks-simple")
@@ -83,11 +89,9 @@ async def get_user_profile(authorization: str = Header(..., alias="Authorization
         
         # CRITICAL FIX: Create fresh service instance per request to prevent cross-user contamination
         spotify_service = SpotifyService()
-        # Create Spotify client
-        sp = spotify_service.create_spotify_client(access_token)
         
-        # Get user profile
-        profile = spotify_service.get_user_profile(sp)
+        # COMPATIBILITY LAYER: Pass token directly instead of Spotipy client
+        profile = spotify_service.get_user_profile(access_token)
         
         return {
             "display_name": profile.get("display_name"),
@@ -301,10 +305,20 @@ async def search_spotify(
     """Search Spotify for tracks, artists, albums, or playlists"""
     try:
         # CRITICAL FIX: Create fresh service instance per request to prevent cross-user contamination
-        spotify_service = SpotifyService()
-        sp = spotify_service.create_spotify_client(token)
+        # COMPATIBILITY LAYER: Use direct HTTP API call instead of Spotipy
+        import requests
+        import urllib.parse
         
-        results = sp.search(q=query, type=search_type, limit=limit)
+        encoded_query = urllib.parse.quote(query)
+        search_url = f"https://api.spotify.com/v1/search?q={encoded_query}&type={search_type}&limit={limit}"
+        headers = {'Authorization': f'Bearer {token}'}
+        
+        response = requests.get(search_url, headers=headers)
+        if response.status_code == 200:
+            results = response.json()
+        else:
+            print(f"❌ COMPATIBILITY: Search failed with HTTP {response.status_code}")
+            raise HTTPException(status_code=response.status_code, detail="Search failed")
         
         if search_type == "track":
             items = results['tracks']['items']
@@ -363,19 +377,23 @@ async def get_user_playlists_simple(
 ):
     """Get user's saved playlists with simple query parameter"""
     try:
-        # CRITICAL FIX: Create fresh service instance per request to prevent cross-user contamination
-        spotify_service = SpotifyService()
-        sp = spotify_service.create_spotify_client(token)
-        
-        # Get all playlists by paginating through results
+        # COMPATIBILITY LAYER: Use direct HTTP API calls instead of Spotipy
         all_playlists = []
-        results = sp.current_user_playlists(limit=limit)
-        all_playlists.extend(results['items'])
+        next_url = f'https://api.spotify.com/v1/me/playlists?limit={limit}'
         
-        # Continue fetching if there are more playlists
-        while results['next']:
-            results = sp.next(results)
-            all_playlists.extend(results['items'])
+        while next_url:
+            import requests
+            headers = {'Authorization': f'Bearer {token}'}
+            response = requests.get(next_url, headers=headers)
+            
+            if response.status_code == 200:
+                data = response.json()
+                all_playlists.extend(data['items'])
+                next_url = data.get('next')
+                print(f"🔍 COMPATIBILITY: Fetched {len(data['items'])} playlists, next_url: {next_url is not None}")
+            else:
+                print(f"❌ COMPATIBILITY: HTTP {response.status_code} getting playlists")
+                break
         
         playlists = []
         for playlist in all_playlists:
@@ -411,19 +429,23 @@ async def get_playlist_tracks(
     Get tracks from a specific Spotify playlist
     """
     try:
-        # CRITICAL FIX: Create fresh service instance per request to prevent cross-user contamination
-        spotify_service = SpotifyService()
-        sp = spotify_service.create_spotify_client(token)
-        
-        # Get all playlist tracks with pagination
+        # COMPATIBILITY LAYER: Use direct HTTP API calls instead of Spotipy
         tracks = []
-        results = sp.playlist_tracks(playlist_id, limit=50)
-        tracks.extend(results['items'])
+        next_url = f'https://api.spotify.com/v1/playlists/{playlist_id}/tracks?limit=50'
         
-        # Continue fetching if there are more tracks
-        while results['next']:
-            results = sp.next(results)
-            tracks.extend(results['items'])
+        while next_url:
+            import requests
+            headers = {'Authorization': f'Bearer {token}'}
+            response = requests.get(next_url, headers=headers)
+            
+            if response.status_code == 200:
+                data = response.json()
+                tracks.extend(data['items'])
+                next_url = data.get('next')
+                print(f"🔍 COMPATIBILITY: Fetched {len(data['items'])} playlist tracks, next_url: {next_url is not None}")
+            else:
+                print(f"❌ COMPATIBILITY: HTTP {response.status_code} getting playlist tracks")
+                break
         
         track_list = []
         for item in tracks:

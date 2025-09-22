@@ -37,11 +37,23 @@ class RecommendationUtils:
             if not access_token:
                 return 'https://picsum.photos/300/300?random=1'
             
-            # Search for the track on Spotify
-            sp = self.spotify_service.create_spotify_client(access_token)
+            # Search for the track on Spotify - COMPATIBILITY LAYER
             search_query = f"track:{track_name} artist:{artist_name}"
             
-            results = sp.search(q=search_query, type='track', limit=1)
+            # Use direct HTTP API call instead of Spotipy
+            import requests
+            import urllib.parse
+            
+            encoded_query = urllib.parse.quote(search_query)
+            search_url = f"https://api.spotify.com/v1/search?q={encoded_query}&type=track&limit=1"
+            headers = {'Authorization': f'Bearer {access_token}'}
+            
+            response = requests.get(search_url, headers=headers)
+            if response.status_code == 200:
+                results = response.json()
+            else:
+                print(f"❌ COMPATIBILITY: Album cover search failed with HTTP {response.status_code}")
+                return 'https://picsum.photos/300/300?random=1'
             
             if results and results.get('tracks', {}).get('items'):
                 track = results['tracks']['items'][0]
@@ -138,8 +150,7 @@ class RecommendationUtils:
                     'duration_ms': 0
                 }
             
-            # Search for the track on Spotify using multiple strategies
-            sp = self.spotify_service.create_spotify_client(access_token)
+            # COMPATIBILITY LAYER: No need to create Spotipy client - using direct HTTP calls
             
             # Try multiple search strategies to handle multi-artist tracks
             search_strategies = [
@@ -155,7 +166,28 @@ class RecommendationUtils:
             
             for search_query in search_strategies:
                 try:
-                    results = sp.search(q=search_query, type='track', limit=5)  # Get more results to find best match
+                    # COMPATIBILITY LAYER: Use direct HTTP API call instead of Spotipy
+                    print(f"🔍 COMPATIBILITY: Searching with query: {search_query}")
+                    import requests
+                    import urllib.parse
+                    
+                    # COMPATIBILITY LAYER: Use the access_token parameter directly
+                    if not access_token:
+                        print(f"❌ COMPATIBILITY: No access token available for search")
+                        continue
+                    
+                    # Make direct HTTP request to Spotify search API
+                    encoded_query = urllib.parse.quote(search_query)
+                    search_url = f"https://api.spotify.com/v1/search?q={encoded_query}&type=track&limit=5"
+                    headers = {'Authorization': f'Bearer {access_token}'}
+                    
+                    response = requests.get(search_url, headers=headers)
+                    if response.status_code == 200:
+                        results = response.json()
+                        print(f"🔍 COMPATIBILITY: Search successful for: {search_query}")
+                    else:
+                        print(f"❌ COMPATIBILITY: Search failed with HTTP {response.status_code}")
+                        continue
                     
                     if results and results.get('tracks', {}).get('items'):
                         # Find the best match from the results
