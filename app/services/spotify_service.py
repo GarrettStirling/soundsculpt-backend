@@ -47,17 +47,153 @@ class SpotifyService:
         state = hashlib.md5(unique_string.encode()).hexdigest()[:16]
         
         print(f"🔐 AUTH URL: Generated unique state: {state}")
-        return self.sp_oauth.get_authorize_url(state=state)
+        
+        # Force Spotify to show login screen every time
+        # This prevents using cached Spotify sessions
+        auth_url = self.sp_oauth.get_authorize_url(state=state)
+        
+        # Add multiple parameters to force fresh login and clear any cached sessions
+        params = []
+        if 'show_dialog' not in auth_url:
+            params.append('show_dialog=true')
+        if 'prompt' not in auth_url:
+            params.append('prompt=login')  # Force login prompt
+        if 'login' not in auth_url:
+            params.append('login=true')    # Additional login parameter
+        
+        # Add parameters to force Spotify to completely forget previous sessions
+        params.append('force_login=true')  # Force login even if user is logged in
+        params.append('skip_initial_state=true')  # Skip any cached state
+        
+        # Add a unique timestamp to prevent any caching
+        import time
+        params.append(f'ts={int(time.time() * 1000)}')  # Unique timestamp
+        
+        # Add logout parameter to force Spotify to clear its session
+        params.append('logout=true')
+        
+        # Add additional parameters to force complete session reset
+        params.append('approval_prompt=force')  # Force approval prompt
+        params.append('response_mode=query')    # Force query mode
+        params.append('include_granted_scopes=true')  # Include granted scopes
+        
+        # Add random parameters to prevent any caching
+        import random
+        params.append(f'nonce={random.randint(100000, 999999)}')  # Random nonce
+        params.append(f'verifier={random.randint(100000, 999999)}')  # Random verifier
+        
+        # Force complete logout and fresh login
+        params.append('logout=true')  # Force logout
+        params.append('prompt=select_account')  # Force account selection
+        params.append('login_hint=')  # Clear login hint
+        params.append('max_age=0')  # Force fresh authentication
+        
+        if params:
+            separator = '&' if '?' in auth_url else '?'
+            auth_url += f"{separator}{'&'.join(params)}"
+            
+        print(f"🔐 AUTH URL: Final URL with forced login params: {auth_url}")
+        return auth_url
     
-    def get_access_token(self, code: str) -> Optional[Dict]:
+    def get_access_token(self, code: str, code_verifier: str = None) -> Optional[Dict]:
         """Exchange authorization code for access token"""
         try:
             print(f"SPOTIFY SERVICE: Attempting token exchange with code: {code[:20]}...")
+            print(f"SPOTIFY SERVICE: Code full length: {len(code)}")
+            print(f"SPOTIFY SERVICE: Code first 50 chars: {code[:50]}")
+            print(f"SPOTIFY SERVICE: Code last 50 chars: {code[-50:]}")
             print(f"SPOTIFY SERVICE: Client ID: {self.client_id}")
             print(f"SPOTIFY SERVICE: Redirect URI: {self.redirect_uri}")
             
-            token_info = self.sp_oauth.get_access_token(code)
+            # ALTERNATIVE APPROACH: Direct HTTP token exchange (bypass Spotipy entirely)
+            try:
+                import requests
+                import base64
+                
+                # Prepare token endpoint
+                token_url = "https://accounts.spotify.com/api/token"
+                
+                # Prepare headers
+                client_credentials = f"{self.client_id}:{self.client_secret}"
+                encoded_credentials = base64.b64encode(client_credentials.encode()).decode()
+                
+                headers = {
+                    'Authorization': f'Basic {encoded_credentials}',
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                }
+                
+                # Prepare data
+                data = {
+                    'grant_type': 'authorization_code',
+                    'code': code,
+                    'redirect_uri': self.redirect_uri
+                }
+                
+                # Add code_verifier for PKCE flow
+                if code_verifier:
+                    data['code_verifier'] = code_verifier
+                    print(f"🔐 DIRECT: Using PKCE code_verifier: {code_verifier[:20]}...")
+                else:
+                    print(f"🔐 DIRECT: No code_verifier provided, using regular OAuth flow")
+                
+                print(f"🔐 DIRECT: Making direct HTTP request to Spotify token endpoint")
+                print(f"🔐 DIRECT: Token URL: {token_url}")
+                print(f"🔐 DIRECT: Code being exchanged: {code[:20]}...")
+                
+                # Make direct HTTP request
+                response = requests.post(token_url, headers=headers, data=data)
+                
+                print(f"🔐 DIRECT: HTTP response status: {response.status_code}")
+                print(f"🔐 DIRECT: HTTP response headers: {dict(response.headers)}")
+                
+                if response.status_code == 200:
+                    token_info = response.json()
+                    print(f"🔐 DIRECT: Token exchange successful via direct HTTP: {token_info}")
+                    
+                    if 'access_token' in token_info:
+                        print(f"🔐 DIRECT: Access token returned: {token_info['access_token'][:20]}...")
+                        print(f"🔐 DIRECT: Full access token: {token_info['access_token']}")
+                        return token_info
+                    else:
+                        print(f"🔐 DIRECT: No access token in direct response!")
+                else:
+                    print(f"🔐 DIRECT: Direct HTTP token exchange failed: {response.status_code}")
+                    print(f"🔐 DIRECT: Error response: {response.text}")
+                    
+            except Exception as direct_error:
+                print(f"⚠️ DIRECT: Direct HTTP token exchange failed: {direct_error}")
+            
+            # FALLBACK: Use Spotipy method
+            print(f"🔐 FALLBACK: Using Spotipy token exchange method")
+            
+            # Create a fresh SpotifyOAuth instance for each token exchange
+            # This prevents state contamination between different users
+            from spotipy.oauth2 import SpotifyOAuth
+            fresh_sp_oauth = SpotifyOAuth(
+                client_id=self.client_id,
+                client_secret=self.client_secret,
+                redirect_uri=self.redirect_uri,
+                scope=self.scope
+            )
+            print(f"SPOTIFY SERVICE: Created fresh OAuth instance for token exchange")
+            
+            # Handle PKCE if code_verifier is provided
+            if code_verifier:
+                print(f"🔐 FALLBACK: Using PKCE with Spotipy, code_verifier: {code_verifier[:20]}...")
+                # For PKCE, we need to use the code_verifier parameter
+                token_info = fresh_sp_oauth.get_access_token(code, code_verifier=code_verifier)
+            else:
+                print(f"🔐 FALLBACK: Using regular OAuth with Spotipy")
+                token_info = fresh_sp_oauth.get_access_token(code)
             print(f"SPOTIFY SERVICE: Token exchange successful: {token_info}")
+            
+            # Log the exact token being returned
+            if token_info and 'access_token' in token_info:
+                print(f"SPOTIFY SERVICE: Access token returned: {token_info['access_token'][:20]}...")
+                print(f"SPOTIFY SERVICE: Full access token: {token_info['access_token']}")
+            else:
+                print(f"SPOTIFY SERVICE: No access token in response!")
+                
             return token_info
         except Exception as e:
             print(f"TOKEN ERROR: {e}")
@@ -67,7 +203,42 @@ class SpotifyService:
     
     def create_spotify_client(self, access_token: str) -> spotipy.Spotify:
         """Create authenticated Spotify client"""
-        return spotipy.Spotify(auth=access_token)
+        print(f"🔍 Creating Spotify client with token: {access_token[:20]}...")
+        
+        # Create a fresh OAuth manager with proper client credentials
+        from spotipy.oauth2 import SpotifyOAuth
+        
+        # Create a completely fresh OAuth manager to prevent any caching
+        fresh_oauth = SpotifyOAuth(
+            client_id=self.client_id,
+            client_secret=self.client_secret,
+            redirect_uri=self.redirect_uri,
+            scope=self.scope
+        )
+        
+        # Manually set the token on the auth manager
+        fresh_oauth.token_info = {
+            'access_token': access_token,
+            'token_type': 'Bearer',
+            'expires_in': 3600
+        }
+        
+        # Create client with fresh OAuth manager
+        client = spotipy.Spotify(auth_manager=fresh_oauth)
+        print(f"🔍 Spotify client created with fresh OAuth manager")
+        
+        # Verify the client has the correct token
+        try:
+            client_token = client.auth_manager.get_access_token()
+            print(f"🔍 Client's internal token: {client_token[:20] if client_token else 'None'}...")
+            if client_token != access_token:
+                print(f"❌ TOKEN MISMATCH! Expected: {access_token[:20]}..., Got: {client_token[:20] if client_token else 'None'}...")
+            else:
+                print(f"✅ Token matches correctly")
+        except Exception as e:
+            print(f"⚠️ Could not verify client token: {e}")
+        
+        return client
     
     def is_token_expired(self, sp_client: spotipy.Spotify) -> bool:
         """Check if the Spotify access token has expired"""
@@ -133,110 +304,9 @@ class SpotifyService:
                     "error": f"Token validation failed: {error_msg}",
                     "user_id": None
                 }
-    
-    # def get_user_saved_tracks_optimized(self, sp_client, max_tracks: int = None, exclude_tracks: bool = False) -> tuple:
-    #     """
-    #     Optimized method to fetch user's saved tracks for both analysis and exclusion.
-        
-    #     Args:
-    #         sp_client: Authenticated Spotify client
-    #         max_tracks: Maximum number of tracks to fetch for analysis (None for all)
-    #         exclude_tracks: Whether to collect ALL track IDs for exclusion
-            
-    #     Returns:
-    #         tuple: (analysis_tracks, excluded_track_ids, excluded_track_data)
-    #     """
-    #     import time
-        
-        
-    #     # Check cache first (cache key based on parameters)
-    #     cache_key = f"saved_tracks_{max_tracks}_{exclude_tracks}"
-    #     current_time = time.time()
-        
-    #     if hasattr(self, '_cached_saved_tracks') and hasattr(self, '_cached_timestamp'):
-    #         if cache_key in self._cached_saved_tracks and (current_time - self._cached_timestamp.get(cache_key, 0)) < 300:  # Cache for 5 minutes
-    #             print(f"DEBUG: Using cached saved tracks for {cache_key}")
-    #             return self._cached_saved_tracks[cache_key]
-        
-    #     print(f"DEBUG: Fetching fresh saved tracks for {cache_key}")
-        
-    #     analysis_tracks = []
-    #     excluded_track_ids = set()
-    #     excluded_track_data = []  # Full track data for name/artist matching
-    #     seen_track_ids = set()
-        
-    #     limit = 50  # Spotify API maximum
-    #     offset = 0
-        
-    #     while True:
-    #         try:
-    #             saved_tracks = sp_client.current_user_saved_tracks(limit=limit, offset=offset)
-    #             if not saved_tracks or not saved_tracks.get('items'):
-    #                 print(f"DEBUG: No more saved tracks at offset {offset}, breaking loop")
-    #                 break
-                
-    #             for item in saved_tracks['items']:
-    #                 track = item['track']
-    #                 if not track or not track.get('id'):
-    #                     continue
-                    
-    #                 track_id = track['id']
-                    
-    #                 # Add to exclusion set if needed (ALWAYS add ALL tracks when exclude_tracks=True)
-    #                 if exclude_tracks:
-    #                     excluded_track_ids.add(track_id)
-    #                     # Also store full track data for name/artist matching
-    #                     excluded_track_data.append({
-    #                         'id': track_id,
-    #                         'name': track['name'],
-    #                         'artist': ', '.join([artist['name'] for artist in track.get('artists', [])])
-    #                     })
-                    
-    #                 # Add to analysis tracks if we haven't reached the limit
-    #                 # This is independent of the exclusion logic
-    #                 if max_tracks is None or len(analysis_tracks) < max_tracks:
-    #                     if track_id not in seen_track_ids:
-    #                         seen_track_ids.add(track_id)
-    #                         analysis_tracks.append({
-    #                             'id': track_id,
-    #                             'name': track['name'],
-    #                             'artists': [{'name': artist['name']} for artist in track.get('artists', [])],
-    #                             'added_at': item.get('added_at')
-    #                         })
-                
-    #             offset += limit
-                
-    #             # Safety limits - but only stop if we have enough analysis tracks AND we're not excluding
-    #             # If we're excluding tracks, we need to fetch ALL tracks regardless of analysis limit
-    #             if max_tracks and len(analysis_tracks) >= max_tracks and not exclude_tracks:
-    #                 print(f"DEBUG: Reached analysis limit {max_tracks}, breaking (exclude_tracks={exclude_tracks})")
-    #                 break
-    #             if offset > 10000:  # Max 10,000 tracks
-    #                 print(f"DEBUG: Reached safety limit of 10,000 tracks, breaking")
-    #                 break
-                    
-    #         except Exception as e:
-    #             print(f"Error fetching saved tracks at offset {offset}: {e}")
-    #             break
-        
-    #     print(f"FINAL: analysis_tracks: {len(analysis_tracks)}, excluded_track_ids: {len(excluded_track_ids)}")
-        
-    #     # Cache the results
-    #     if not hasattr(self, '_cached_saved_tracks'):
-    #         self._cached_saved_tracks = {}
-    #     if not hasattr(self, '_cached_timestamp'):
-    #         self._cached_timestamp = {}
-            
-    #     result = (analysis_tracks, excluded_track_ids, excluded_track_data)
-    #     self._cached_saved_tracks[cache_key] = result
-    #     self._cached_timestamp[cache_key] = current_time
-        
-    #     print(f"Cached saved tracks for {cache_key}")
-        
-    #     return result
-    
+
     def get_user_saved_tracks_parallel(self, 
-                                       sp_client, 
+                                       sp_client=None,  # COMPATIBILITY LAYER: No longer needed
                                        max_tracks: int = None, 
                                        exclude_tracks: bool = False,
                                        access_token: str = None) -> tuple:
@@ -304,13 +374,22 @@ class SpotifyService:
             print(f"Fetching fresh saved tracks - analysis: {need_analysis_tracks}, exclusion: {need_exclusion_tracks}")
             start_time = time.time()
             
-            # First, get total count to determine how many parallel requests we need
+            # First, get total count using direct HTTP API call - COMPATIBILITY LAYER
             try:
-                initial_response = sp_client.current_user_saved_tracks(limit=1, offset=0)
-                total_tracks = initial_response.get('total', 0)
-                print(f"Total saved tracks: {total_tracks}")
+                print(f"🔍 COMPATIBILITY: Getting saved tracks count with direct HTTP API")
+                import requests
+                headers = {'Authorization': f'Bearer {access_token}'}
+                response = requests.get('https://api.spotify.com/v1/me/tracks?limit=1&offset=0', headers=headers)
+                
+                if response.status_code == 200:
+                    initial_response = response.json()
+                    total_tracks = initial_response.get('total', 0)
+                    print(f"🔍 COMPATIBILITY: Total saved tracks: {total_tracks}")
+                else:
+                    print(f"❌ COMPATIBILITY: HTTP {response.status_code} getting saved tracks count")
+                    return [], set(), []
             except Exception as e:
-                print(f"Error getting total count: {e}")
+                print(f"❌ COMPATIBILITY: Error getting total count: {e}")
                 return [], set(), []
             
             if total_tracks == 0:
@@ -331,11 +410,20 @@ class SpotifyService:
         print(f"Making {num_requests} parallel requests to fetch {tracks_to_fetch} tracks")
         
         def fetch_batch(offset):
-            """Fetch a batch of saved tracks"""
+            """Fetch a batch of saved tracks - COMPATIBILITY LAYER"""
             try:
-                return sp_client.current_user_saved_tracks(limit=limit, offset=offset)
+                print(f"🔍 COMPATIBILITY: Fetching batch at offset {offset}")
+                import requests
+                headers = {'Authorization': f'Bearer {access_token}'}
+                response = requests.get(f'https://api.spotify.com/v1/me/tracks?limit={limit}&offset={offset}', headers=headers)
+                
+                if response.status_code == 200:
+                    return response.json()
+                else:
+                    print(f"❌ COMPATIBILITY: HTTP {response.status_code} fetching batch at offset {offset}")
+                    return None
             except Exception as e:
-                print(f"Error fetching batch at offset {offset}: {e}")
+                print(f"❌ COMPATIBILITY: Error fetching batch at offset {offset}: {e}")
                 return None
         
         # Initialize variables for fetching
@@ -419,64 +507,59 @@ class SpotifyService:
         
         return analysis_tracks, excluded_ids, excluded_track_data
     
-    def get_user_profile(self, sp: spotipy.Spotify) -> Dict:
-        """Get user's basic profile information"""
+    def get_user_profile(self, token: str) -> Dict:
+        """Get user's basic profile information - COMPATIBILITY LAYER using direct HTTP calls"""
         try:
-            print(f"🔍 USER PROFILE DEBUG: Attempting to get user profile...")
-            user_profile = sp.current_user()
-            user_id = user_profile.get('id', 'unknown')
-            display_name = user_profile.get('display_name', 'unknown')
-            email = user_profile.get('email', 'unknown')
+            print(f"🔍 COMPATIBILITY: Getting user profile with token (length: {len(token)})")
             
-            print(f"🔍 USER PROFILE DEBUG: Retrieved profile - ID: {user_id}, Name: {display_name}, Email: {email}")
-            print(f"🔍 USER PROFILE DEBUG: Full profile keys: {list(user_profile.keys())}")
+            # Use direct HTTP API call instead of Spotipy to avoid caching issues
+            import requests
+            headers = {'Authorization': f'Bearer {token}'}
+            response = requests.get('https://api.spotify.com/v1/me', headers=headers)
             
-            return user_profile
+            if response.status_code == 200:
+                user_profile = response.json()
+                user_id = user_profile.get('id', 'unknown')
+                display_name = user_profile.get('display_name', 'unknown')
+                email = user_profile.get('email', 'unknown')
+                
+                print(f"🔍 COMPATIBILITY: Retrieved profile - ID: {user_id}, Name: {display_name}, Email: {email}")
+                return user_profile
+            else:
+                print(f"❌ COMPATIBILITY: HTTP {response.status_code} getting user profile")
+                return {}
+                
         except Exception as e:
-            print(f"❌ USER PROFILE DEBUG: Error getting user profile: {e}")
-            # Check if it's a 403 error specifically
-            if "403" in str(e) or "Forbidden" in str(e):
-                print("❌ 403 Forbidden error - this usually means:")
-                print("1. The user is not registered in your Spotify app")
-                print("2. The app configuration is incorrect")
-                print("3. The access token is invalid or expired")
-                print("4. The required scopes are not granted")
+            print(f"❌ COMPATIBILITY: Error getting user profile: {e}")
             return {}
     
     def get_user_id_from_token(self, access_token: str) -> str:
-        """Get user ID from access token"""
+        """Get user ID from access token - COMPATIBILITY LAYER"""
         try:
-            print(f"🔍 USER ID DEBUG: Getting user ID from token...")
-            print(f"🔍 USER ID DEBUG: Token preview: {access_token[:20]}...")
+            print(f"🔍 COMPATIBILITY: Getting user ID from token...")
             
-            sp = self.create_spotify_client(access_token)
-            print(f"🔍 USER ID DEBUG: Created Spotify client successfully")
-            
-            user_profile = self.get_user_profile(sp)
+            # Use direct HTTP API call instead of Spotipy to avoid caching issues
+            user_profile = self.get_user_profile(access_token)
             if user_profile and user_profile.get('id'):
                 user_id = user_profile['id']
                 display_name = user_profile.get('display_name', 'unknown')
                 email = user_profile.get('email', 'unknown')
                 
-                print(f"🔍 USER ID DEBUG: Successfully got user ID: {user_id}")
-                print(f"🔍 USER ID DEBUG: User details - ID: {user_id}, Name: {display_name}, Email: {email}")
-                
+                print(f"🔍 COMPATIBILITY: Successfully got user ID: {user_id}")
                 return user_id
             else:
-                print("⚠️ USER ID DEBUG: User profile is empty or missing ID, using token hash fallback")
+                print("⚠️ COMPATIBILITY: User profile is empty or missing ID, using token hash fallback")
                 # Fallback to token hash if user profile fails
                 import hashlib
                 fallback_id = hashlib.md5(access_token.encode()).hexdigest()[:16]
-                print(f"⚠️ USER ID DEBUG: Using fallback user ID: {fallback_id}")
+                print(f"⚠️ COMPATIBILITY: Using fallback user ID: {fallback_id}")
                 return fallback_id
         except Exception as e:
-            print(f"❌ USER ID DEBUG: Error getting user ID from token: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"❌ COMPATIBILITY: Error getting user ID from token: {e}")
             # Fallback to token hash
             import hashlib
             fallback_id = hashlib.md5(access_token.encode()).hexdigest()[:16]
-            print(f"⚠️ USER ID DEBUG: Using fallback user ID due to error: {fallback_id}")
+            print(f"⚠️ Using fallback user ID due to error: {fallback_id}")
             return fallback_id
     
     # REMOVED DUPLICATE METHOD - using the detailed version above
@@ -568,7 +651,7 @@ class SpotifyService:
     def add_tracks_to_playlist(self, sp: spotipy.Spotify, playlist_id: str, track_ids: List[str]) -> bool:
         """Add tracks to an existing playlist"""
         try:
-            print(f"Adding {len(track_ids)} tracks to playlist {playlist_id}")  # DEBUG
+            print(f"Adding {len(track_ids)} tracks to playlist {playlist_id}")
             # Spotify API allows max 100 tracks per request
             for i in range(0, len(track_ids), 100):
                 batch = track_ids[i:i+100]

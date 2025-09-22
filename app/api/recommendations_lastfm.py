@@ -35,8 +35,8 @@ def get_user_id_from_token(token: str) -> str:
     try:
         # CRITICAL FIX: Always create a fresh Spotify service instance to avoid cross-user contamination
         spotify_service = SpotifyService()
-        sp = spotify_service.create_spotify_client(token)
-        user_profile = spotify_service.get_user_profile(sp)
+        # COMPATIBILITY LAYER: Pass token directly instead of Spotipy client
+        user_profile = spotify_service.get_user_profile(token)
         if user_profile and user_profile.get('id'):
             user_id = user_profile['id']
             print(f"🔍 Retrieved user ID from token: {user_id}")
@@ -168,20 +168,28 @@ async def get_collection_size(token: str = Query(..., description="Spotify acces
         
         # Create fresh Spotify service instance
         spotify_service = SpotifyService()
-        sp = spotify_service.create_spotify_client(token)
         
-        # Test authentication
+        # COMPATIBILITY LAYER: Use direct HTTP API call instead of Spotipy
         try:
-            user_info = sp.me()
+            user_info = spotify_service.get_user_profile(token)
             print(f"Getting collection size for user: {user_info.get('display_name', 'Unknown')}")
         except Exception as auth_error:
             print(f"Authentication failed: {auth_error}")
             raise HTTPException(status_code=401, detail="Invalid or expired access token")
         
-        # Get user's saved tracks count
+        # Get user's saved tracks count - COMPATIBILITY LAYER
         try:
-            saved_tracks = sp.current_user_saved_tracks(limit=1)
-            total_saved = saved_tracks.get('total', 0)
+            # Use direct HTTP API call instead of Spotipy
+            import requests
+            headers = {'Authorization': f'Bearer {token}'}
+            response = requests.get('https://api.spotify.com/v1/me/tracks?limit=1', headers=headers)
+            
+            if response.status_code == 200:
+                saved_tracks = response.json()
+                total_saved = saved_tracks.get('total', 0)
+            else:
+                print(f"❌ COMPATIBILITY: HTTP {response.status_code} getting saved tracks count")
+                total_saved = 0
             print(f"User has {total_saved} saved tracks")
             
             # Determine if this is a large collection
@@ -238,11 +246,15 @@ async def get_search_based_recommendations_stream(
         
         # Create fresh Spotify service instance
         spotify_service = SpotifyService()
-        sp = spotify_service.create_spotify_client(token)
         
-        # Check if token is expired
-        if spotify_service.is_token_expired(sp):
-            raise HTTPException(status_code=401, detail="Spotify access token has expired. Please reconnect your Spotify account.")
+        # COMPATIBILITY LAYER: Check token validity with direct HTTP call instead of Spotipy
+        try:
+            user_profile = spotify_service.get_user_profile(token)
+            if not user_profile or not user_profile.get('id'):
+                raise HTTPException(status_code=401, detail="Spotify access token is invalid. Please reconnect your Spotify account.")
+        except Exception as e:
+            print(f"❌ COMPATIBILITY: Token validation failed: {e}")
+            raise HTTPException(status_code=401, detail="Spotify access token is invalid. Please reconnect your Spotify account.")
         
         # Parse excluded track IDs
         excluded_ids = set()
@@ -289,7 +301,7 @@ async def get_search_based_recommendations_stream(
                         fetch_start_time = time.time()
                         
                         analysis_tracks, _, excluded_track_data = spotify_service.get_user_saved_tracks_parallel(
-                            sp_client=sp,
+                            sp_client=None,  # COMPATIBILITY LAYER: No longer using Spotipy client
                             max_tracks=analysis_track_count,
                             exclude_tracks=exclude_saved_tracks,
                             access_token=token
@@ -423,24 +435,23 @@ async def get_manual_recommendations_stream(request: ManualRecommendationRequest
         # Initialize services - create fresh instances per request
         spotify_service = SpotifyService()
         manual_discovery_service = ManualDiscoveryService()
-        sp = spotify_service.create_spotify_client(request.token)
         
-        # Check if token is expired
-        if spotify_service.is_token_expired(sp):
-            raise HTTPException(status_code=401, detail="Spotify access token has expired. Please reconnect your Spotify account.")
+        try:
+            user_profile = spotify_service.get_user_profile(request.token)
+            if not user_profile or not user_profile.get('id'):
+                raise HTTPException(status_code=401, detail="Spotify access token is invalid. Please reconnect your Spotify account.")
+        except Exception as e:
+            print(f"Token validation failed: {e}")
+            raise HTTPException(status_code=401, detail="Spotify access token is invalid. Please reconnect your Spotify account.")
         
         # Test authentication and get user info
-        try:
-            user_info = sp.me()
-            user_id = user_info.get('id')
-            if not user_id:
-                raise HTTPException(status_code=401, detail="Could not retrieve user ID from token")
-            print(f"🔐 Authenticated user: {user_id}")
-        except Exception as auth_error:
-            raise HTTPException(status_code=401, detail="Invalid or expired access token")
+        user_id = user_profile.get('id')
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Could not retrieve user ID from token")
+        print(f"🔐 Authenticated user: {user_id}")
         
         # Process seed data
-        seed_tracks_info = _process_seed_data(sp, request)
+        seed_tracks_info = _process_seed_data(request.token, request)
         
         if not seed_tracks_info:
             raise HTTPException(status_code=400, detail="Could not retrieve any valid seed information from tracks, artists, or playlists")
@@ -744,14 +755,13 @@ async def create_playlist_from_recommendations(
 ):
     """Create a Spotify playlist from recommendation track IDs"""
     try:
-        print(f"🔍 PLAYLIST CREATION DEBUG: Creating playlist '{request.name}' with {len(request.track_ids)} tracks")
+        print(f"Creating playlist '{request.name}' with {len(request.track_ids)} tracks")
         
         # Validate access token
         try:
             # Create fresh Spotify service instance
             spotify_service = SpotifyService()
-            sp = spotify_service.create_spotify_client(token)
-            user_info = sp.me()
+            user_info = spotify_service.get_user_profile(token)
             print(f"Creating playlist for user: {user_info.get('display_name', 'Unknown')}")
         except Exception as auth_error:
             print(f"Authentication failed: {auth_error}")
@@ -759,16 +769,31 @@ async def create_playlist_from_recommendations(
         
         # Create the playlist
         try:
-            playlist = sp.user_playlist_create(
-                user=user_info['id'],
-                name=request.name,
-                public=False,
-                description=request.description or f"Generated playlist with {len(request.track_ids)} tracks"
-            )
+            import requests
             
-            playlist_id = playlist['id']
-            playlist_url = playlist['external_urls']['spotify']
-            print(f"✅ Created playlist: {playlist_id}")
+            user_id = user_info['id']
+            playlist_data = {
+                'name': request.name,
+                'public': False,
+                'description': request.description or f"Generated playlist with {len(request.track_ids)} tracks"
+            }
+            
+            headers = {
+                'Authorization': f'Bearer {token}',
+                'Content-Type': 'application/json'
+            }
+            
+            create_url = f'https://api.spotify.com/v1/users/{user_id}/playlists'
+            response = requests.post(create_url, headers=headers, json=playlist_data)
+            
+            if response.status_code == 201:
+                playlist = response.json()
+                playlist_id = playlist['id']
+                playlist_url = playlist['external_urls']['spotify']
+                print(f"✅ Created playlist: {playlist_id}")
+            else:
+                print(f"HTTP {response.status_code} creating playlist")
+                raise HTTPException(status_code=500, detail=f"Failed to create playlist: HTTP {response.status_code}")
             
         except Exception as playlist_error:
             print(f"Error creating playlist: {playlist_error}")
@@ -812,7 +837,21 @@ async def create_playlist_from_recommendations(
                             continue
                         
                         search_query = f"track:\"{track_name}\" artist:\"{artist_name}\""
-                        search_results = sp.search(q=search_query, type='track', limit=1)
+                        
+                        # COMPATIBILITY LAYER: Use direct HTTP API call instead of Spotipy
+                        import requests
+                        import urllib.parse
+                        
+                        encoded_query = urllib.parse.quote(search_query)
+                        search_url = f"https://api.spotify.com/v1/search?q={encoded_query}&type=track&limit=1"
+                        headers = {'Authorization': f'Bearer {token}'}
+                        
+                        response = requests.get(search_url, headers=headers)
+                        if response.status_code == 200:
+                            search_results = response.json()
+                        else:
+                            print(f"❌ COMPATIBILITY: Search failed with HTTP {response.status_code}")
+                            search_results = None
                         
                         if search_results and search_results.get('tracks', {}).get('items'):
                             spotify_track = search_results['tracks']['items'][0]
@@ -849,11 +888,23 @@ async def create_playlist_from_recommendations(
             for i in range(0, len(track_uris), 100):
                 batch = track_uris[i:i+100]
                 try:
-                    sp.playlist_add_items(playlist_id, batch)
-                    tracks_added += len(batch)
-                    print(f"✅ Added batch {i//100 + 1}: {len(batch)} tracks")
+                    import requests
+                    headers = {
+                        'Authorization': f'Bearer {token}',
+                        'Content-Type': 'application/json'
+                    }
+                    add_url = f'https://api.spotify.com/v1/playlists/{playlist_id}/tracks'
+                    add_data = {'uris': batch}
+                    
+                    response = requests.post(add_url, headers=headers, json=add_data)
+                    if response.status_code == 201:
+                        tracks_added += len(batch)
+                        print(f"✅ Added batch {i//100 + 1}: {len(batch)} tracks")
+                    else:
+                        print(f"HTTP {response.status_code} adding batch {i//100 + 1}")
+                        continue
                 except Exception as batch_error:
-                    print(f"❌ Error adding batch {i//100 + 1}: {batch_error}")
+                        print(f"Error adding batch {i//100 + 1}: {batch_error}")
                     continue
             
             print(f"✅ Successfully added {tracks_added} tracks to playlist")
@@ -892,83 +943,103 @@ async def create_playlist_from_recommendations(
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-def _process_seed_data(sp, request):
+def _process_seed_data(token, request):
     """Helper function to process seed tracks, artists, and playlists"""
     seed_tracks_info = []
     
     # Process seed tracks
     for i, seed_track_id in enumerate(request.seed_tracks):
         try:
-            seed_track_info = sp.track(seed_track_id)
-            if not seed_track_info:
-                continue
+            # Use direct HTTP API call instead of Spotipy
+            import requests
+            headers = {'Authorization': f'Bearer {token}'}
+            response = requests.get(f'https://api.spotify.com/v1/tracks/{seed_track_id}', headers=headers)
             
-            seed_track_name = seed_track_info.get('name', '')
-            seed_artist_name = seed_track_info.get('artists', [{}])[0].get('name', '') if seed_track_info.get('artists') else ''
-            
-            if seed_track_name and seed_artist_name:
-                seed_tracks_info.append({
-                    'name': seed_track_name,
-                    'artist': seed_artist_name,
-                    'id': seed_track_id,
-                    'source': 'direct_track'
-                })
+            if response.status_code == 200:
+                seed_track_info = response.json()
+                seed_track_name = seed_track_info.get('name', '')
+                seed_artist_name = seed_track_info.get('artists', [{}])[0].get('name', '') if seed_track_info.get('artists') else ''
+                
+                if seed_track_name and seed_artist_name:
+                    seed_tracks_info.append({
+                        'name': seed_track_name,
+                        'artist': seed_artist_name,
+                        'id': seed_track_id,
+                        'source': 'direct_track'
+                    })
         except Exception as e:
+            print(f"❌ COMPATIBILITY: Error processing seed track {seed_track_id}: {e}")
             continue
     
     # Process seed artists
     for i, seed_artist_id in enumerate(request.seed_artists):
         try:
-            seed_artist_info = sp.artist(seed_artist_id)
-            if not seed_artist_info:
-                continue
+            # Use direct HTTP API call instead of Spotipy
+            import requests
+            headers = {'Authorization': f'Bearer {token}'}
             
-            artist_name = seed_artist_info.get('name', '')
-            if artist_name:
-                top_tracks = sp.artist_top_tracks(seed_artist_id, country='US')
-                if top_tracks and top_tracks.get('tracks'):
-                    random.seed(i)
-                    tracks = random.sample(top_tracks['tracks'], 3)
-                    for track in tracks:
-                        track_name = track.get('name', '')
-                        if track_name:
-                            seed_tracks_info.append({
-                                'name': track_name,
-                                'artist': artist_name,
-                                'id': track['id'],
-                                'source': 'artist_top_track'
-                            })
+            # Get artist info
+            artist_response = requests.get(f'https://api.spotify.com/v1/artists/{seed_artist_id}', headers=headers)
+            if artist_response.status_code == 200:
+                seed_artist_info = artist_response.json()
+                artist_name = seed_artist_info.get('name', '')
+                
+                if artist_name:
+                    # Get artist's top tracks
+                    top_tracks_response = requests.get(f'https://api.spotify.com/v1/artists/{seed_artist_id}/top-tracks?country=US', headers=headers)
+                    if top_tracks_response.status_code == 200:
+                        top_tracks = top_tracks_response.json()
+                        if top_tracks and top_tracks.get('tracks'):
+                            random.seed(i)
+                            tracks = random.sample(top_tracks['tracks'], 3)
+                            for track in tracks:
+                                track_name = track.get('name', '')
+                                if track_name:
+                                    seed_tracks_info.append({
+                                        'name': track_name,
+                                        'artist': artist_name,
+                                        'id': track['id'],
+                                        'source': 'artist_top_track'
+                                    })
         except Exception as e:
-            print(f"Error processing seed artist {seed_artist_id}: {e}")
+            print(f"❌ COMPATIBILITY: Error processing seed artist {seed_artist_id}: {e}")
             continue
     
     # Process seed playlists
     for i, seed_playlist_id in enumerate(request.seed_playlists):
         try:
-            seed_playlist_info = sp.playlist(seed_playlist_id)
-            if not seed_playlist_info:
-                continue
+            # Use direct HTTP API call instead of Spotipy
+            import requests
+            headers = {'Authorization': f'Bearer {token}'}
             
-            playlist_name = seed_playlist_info.get('name', '')
-            if playlist_name:
-                playlist_tracks = sp.playlist_tracks(seed_playlist_id, limit=50)
-                if playlist_tracks and playlist_tracks.get('items'):
-                    random.seed(i)
-                    tracks = random.sample(playlist_tracks['items'], 5)
-                    for item in tracks:
-                        track = item.get('track')
-                        if track and track.get('name') and track.get('artists'):
-                            track_name = track.get('name', '')
-                            artist_name = track['artists'][0].get('name', '') if track['artists'] else ''
-                            if track_name and artist_name:
-                                seed_tracks_info.append({
-                                    'name': track_name,
-                                    'artist': artist_name,
-                                    'id': track['id'],
-                                    'source': 'playlist_track'
-                                })
+            # Get playlist info
+            playlist_response = requests.get(f'https://api.spotify.com/v1/playlists/{seed_playlist_id}', headers=headers)
+            if playlist_response.status_code == 200:
+                seed_playlist_info = playlist_response.json()
+                playlist_name = seed_playlist_info.get('name', '')
+                
+                if playlist_name:
+                    # Get playlist tracks
+                    playlist_tracks_response = requests.get(f'https://api.spotify.com/v1/playlists/{seed_playlist_id}/tracks?limit=50', headers=headers)
+                    if playlist_tracks_response.status_code == 200:
+                        playlist_tracks = playlist_tracks_response.json()
+                        if playlist_tracks and playlist_tracks.get('items'):
+                            random.seed(i)
+                            tracks = random.sample(playlist_tracks['items'], 5)
+                            for item in tracks:
+                                track = item.get('track')
+                                if track and track.get('name') and track.get('artists'):
+                                    track_name = track.get('name', '')
+                                    artist_name = track['artists'][0].get('name', '') if track['artists'] else ''
+                                    if track_name and artist_name:
+                                        seed_tracks_info.append({
+                                            'name': track_name,
+                                            'artist': artist_name,
+                                            'id': track['id'],
+                                            'source': 'playlist_track'
+                                        })
         except Exception as e:
-            print(f"Error processing seed playlist {seed_playlist_id}: {e}")
+            print(f"❌ COMPATIBILITY: Error processing seed playlist {seed_playlist_id}: {e}")
             continue
     
     return seed_tracks_info
