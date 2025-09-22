@@ -474,7 +474,7 @@ async def get_manual_recommendations_stream(request: ManualRecommendationRequest
         if request.exclude_saved_tracks:
             try:
                 _, excluded_ids, excluded_track_data = spotify_service.get_user_saved_tracks_parallel(
-                    sp_client=sp,
+                    sp_client=None,
                     max_tracks=None,
                     exclude_tracks=True,
                     access_token=request.token
@@ -904,7 +904,7 @@ async def create_playlist_from_recommendations(
                         print(f"HTTP {response.status_code} adding batch {i//100 + 1}")
                         continue
                 except Exception as batch_error:
-                        print(f"Error adding batch {i//100 + 1}: {batch_error}")
+                    print(f"Error adding batch {i//100 + 1}: {batch_error}")
                     continue
             
             print(f"✅ Successfully added {tracks_added} tracks to playlist")
