@@ -436,24 +436,21 @@ async def get_manual_recommendations_stream(request: ManualRecommendationRequest
         spotify_service = SpotifyService()
         manual_discovery_service = ManualDiscoveryService()
         
-        # COMPATIBILITY LAYER: Validate token with direct HTTP call instead of creating Spotipy client
         try:
             user_profile = spotify_service.get_user_profile(request.token)
             if not user_profile or not user_profile.get('id'):
                 raise HTTPException(status_code=401, detail="Spotify access token is invalid. Please reconnect your Spotify account.")
         except Exception as e:
-            print(f"❌ COMPATIBILITY: Token validation failed: {e}")
+            print(f"Token validation failed: {e}")
             raise HTTPException(status_code=401, detail="Spotify access token is invalid. Please reconnect your Spotify account.")
         
-        # COMPATIBILITY LAYER: Token validation already done above with direct HTTP call
-        
-        # Test authentication and get user info - COMPATIBILITY LAYER: Already validated above
+        # Test authentication and get user info
         user_id = user_profile.get('id')
         if not user_id:
             raise HTTPException(status_code=401, detail="Could not retrieve user ID from token")
         print(f"🔐 Authenticated user: {user_id}")
         
-        # Process seed data - COMPATIBILITY LAYER: Pass token instead of sp client
+        # Process seed data
         seed_tracks_info = _process_seed_data(request.token, request)
         
         if not seed_tracks_info:
@@ -758,9 +755,9 @@ async def create_playlist_from_recommendations(
 ):
     """Create a Spotify playlist from recommendation track IDs"""
     try:
-        print(f"🔍 PLAYLIST CREATION DEBUG: Creating playlist '{request.name}' with {len(request.track_ids)} tracks")
+        print(f"Creating playlist '{request.name}' with {len(request.track_ids)} tracks")
         
-        # Validate access token - COMPATIBILITY LAYER
+        # Validate access token
         try:
             # Create fresh Spotify service instance
             spotify_service = SpotifyService()
@@ -770,7 +767,7 @@ async def create_playlist_from_recommendations(
             print(f"Authentication failed: {auth_error}")
             raise HTTPException(status_code=401, detail="Invalid or expired access token")
         
-        # Create the playlist - COMPATIBILITY LAYER: Use direct HTTP API call
+        # Create the playlist
         try:
             import requests
             
@@ -795,7 +792,7 @@ async def create_playlist_from_recommendations(
                 playlist_url = playlist['external_urls']['spotify']
                 print(f"✅ Created playlist: {playlist_id}")
             else:
-                print(f"❌ COMPATIBILITY: HTTP {response.status_code} creating playlist")
+                print(f"HTTP {response.status_code} creating playlist")
                 raise HTTPException(status_code=500, detail=f"Failed to create playlist: HTTP {response.status_code}")
             
         except Exception as playlist_error:
@@ -886,12 +883,11 @@ async def create_playlist_from_recommendations(
             # Convert track IDs to URIs and add to playlist
             track_uris = [f"spotify:track:{track_id}" for track_id in all_spotify_ids]
             
-            # Add tracks in batches (Spotify allows max 100 tracks per request) - COMPATIBILITY LAYER
+            # Add tracks in batches (Spotify allows max 100 tracks per request)
             tracks_added = 0
             for i in range(0, len(track_uris), 100):
                 batch = track_uris[i:i+100]
                 try:
-                    # Use direct HTTP API call instead of Spotipy
                     import requests
                     headers = {
                         'Authorization': f'Bearer {token}',
@@ -905,10 +901,10 @@ async def create_playlist_from_recommendations(
                         tracks_added += len(batch)
                         print(f"✅ Added batch {i//100 + 1}: {len(batch)} tracks")
                     else:
-                        print(f"❌ COMPATIBILITY: HTTP {response.status_code} adding batch {i//100 + 1}")
+                        print(f"HTTP {response.status_code} adding batch {i//100 + 1}")
                         continue
                 except Exception as batch_error:
-                    print(f"❌ Error adding batch {i//100 + 1}: {batch_error}")
+                        print(f"Error adding batch {i//100 + 1}: {batch_error}")
                     continue
             
             print(f"✅ Successfully added {tracks_added} tracks to playlist")
@@ -948,7 +944,7 @@ async def create_playlist_from_recommendations(
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 def _process_seed_data(token, request):
-    """Helper function to process seed tracks, artists, and playlists - COMPATIBILITY LAYER: Uses direct HTTP API calls"""
+    """Helper function to process seed tracks, artists, and playlists"""
     seed_tracks_info = []
     
     # Process seed tracks
